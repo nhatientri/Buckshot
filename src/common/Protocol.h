@@ -13,11 +13,12 @@ struct PacketHeader {
 
 // Command Codes
 enum Command : uint8_t {
+    CMD_OK = 0, // Used for success responses
     CMD_REGISTER = 1,
     CMD_LOGIN = 2,
-    CMD_LOGIN_SUCCESS = 3,
-    CMD_LOGIN_FAIL = 4,
-
+    CMD_FAIL = 255, // Explicit fail code
+    // Duplicates removed
+    
     CMD_LIST_USERS = 5,
     CMD_LIST_USERS_RESP = 6,
 
@@ -75,6 +76,8 @@ struct GameStatePacket {
     int p1Hp;
     int p2Hp;
     int shellsRemaining;
+    int liveCount; // Start of round count
+    int blankCount; // Start of round count
     
     uint8_t p1Inventory[8];
     uint8_t p2Inventory[8];
@@ -83,6 +86,8 @@ struct GameStatePacket {
     bool knifeActive;
     
     char currentTurnUser[32]; // Username of whose turn it is
+    char p1Name[32];
+    char p2Name[32];
     char message[64]; // "Player1 shot Self! It was a Blank."
     bool gameOver;
     char winner[32];

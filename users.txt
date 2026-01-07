@@ -1,7 +1,9 @@
 userA passA 0 0 1000
 UP user123 0 0 1000
-userB passB 0 0 1000
-testuser password123 0 0 1000
-p1 pass 0 1 984
-player2 pass 0 0 1000
 p2 pass 1 0 1016
+player2 pass 0 0 1000
+p1 pass 4 3 1011
+testuser password123 0 0 1000
+userB passB 0 0 1000
+hello 123 2 6 942
+123 123 2 0 1031

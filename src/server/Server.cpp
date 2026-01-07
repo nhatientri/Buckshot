@@ -118,9 +118,12 @@ void Server::handleClientActivity(fd_set& readfds) {
                             LoginRequest* req = (LoginRequest*)body.data();
                             bool success = userManager.registerUser(req->username, req->password);
                             PacketHeader resp;
-                            resp.command = success ? CMD_LOGIN_SUCCESS : CMD_LOGIN_FAIL;
-                            resp.size = 0; // No body for now, or maybe message
+                            resp.command = success ? CMD_OK : CMD_FAIL;
+                            resp.size = 0; 
                             send(sd, &resp, sizeof(resp), 0);
+                            if (success) {
+                                authenticatedUsers[sd] = req->username;
+                            }
                             std::cout << "Register request: " << req->username << " -> " << success << std::endl;
                         }
                     } else if (header.command == CMD_LOGIN) {
@@ -128,7 +131,7 @@ void Server::handleClientActivity(fd_set& readfds) {
                             LoginRequest* req = (LoginRequest*)body.data();
                             bool success = userManager.loginUser(req->username, req->password);
                             PacketHeader resp;
-                            resp.command = success ? CMD_LOGIN_SUCCESS : CMD_LOGIN_FAIL;
+                            resp.command = success ? CMD_OK : CMD_FAIL;
                             resp.size = 0;
                             send(sd, &resp, sizeof(resp), 0);
                             if (success) {
@@ -172,22 +175,27 @@ void Server::handleClientActivity(fd_set& readfds) {
                             }
 
                             if (targetFd != -1) {
-                                // Found, forward request
+                                // Self check
+                                if (target == authenticatedUsers[sd]) {
+                                     // Just ignore or send fail
+                                     // For now ignore
+                                     std::cout << "Ignored self challenge from " << target << std::endl;
+                                } else {
+                                    // Found, forward request
                                 // We need to send the Challenger's name to the Target
                                 ChallengePacket forwardPkt;
                                 std::string challenger = authenticatedUsers[sd];
                                 strncpy(forwardPkt.targetUser, challenger.c_str(), 32);
 
-                                PacketHeader fwdHeader;
-                                fwdHeader.command = CMD_CHALLENGE_REQ;
-                                fwdHeader.size = sizeof(ChallengePacket);
+                                PacketHeader hdr = {(uint32_t)sizeof(ChallengePacket), CMD_CHALLENGE_REQ};
                                 
-                                send(targetFd, &fwdHeader, sizeof(fwdHeader), 0);
+                                send(targetFd, &hdr, sizeof(hdr), 0);
                                 send(targetFd, &forwardPkt, sizeof(forwardPkt), 0);
-                                std::cout << "Forwarding challenge from " << challenger << " to " << target << std::endl;
+                                std::cout << "Forwarded challenge from " << challenger << " to " << target << " (" << targetFd << ")" << std::endl;
+                                } // Closing else
                             } else {
-                                // Not found, send fail ? (TODO)
-                                std::cout << "Challenge target not found: " << target << std::endl;
+                                // User not found
+                                std::cout << "User " << target << " not found for challenge." << std::endl;
                             }
                         }
                     } else if (header.command == CMD_CHALLENGE_RESP) {

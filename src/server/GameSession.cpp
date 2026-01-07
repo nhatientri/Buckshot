@@ -7,8 +7,9 @@
 namespace Buckshot {
 
 GameSession::GameSession(const std::string& p1, const std::string& p2, int fd1, int fd2)
-    : p1Name(p1), p2Name(p2), p1Fd(fd1), p2Fd(fd2), hp1(3), hp2(3), gameOver(false),
+    : p1Name(p1), p2Name(p2), p1Fd(fd1), p2Fd(fd2), hp1(5), hp2(5), gameOver(false),
       p1Handcuffed(false), p2Handcuffed(false), knifeActive(false), inverterActive(false) {
+    
     currentTurn = p1Name; // P1 starts
     loadShells();
 }
@@ -32,22 +33,29 @@ void GameSession::loadShells() {
     }
     
     std::shuffle(shells.begin(), shells.end(), gen);
-    lastMessage = "Loaded " + std::to_string(count) + " shells.";
+    
+    // Count totals
+    totalLive = 0;
+    totalBlank = 0;
+    for (bool s : shells) {
+        if (s) totalLive++; else totalBlank++;
+    }
+    
+    lastMessage = "Loaded " + std::to_string(count) + " shells (" + std::to_string(totalLive) + " Live, " + std::to_string(totalBlank) + " Blank)";
     
     distributeItems();
 }
 
 void GameSession::distributeItems() {
-    // Distribute a random number of items (1 to 4) on reload
+    // Distribute fixed 3 items, max 6 in inventory
     static std::random_device rd;
     static std::mt19937 gen(rd());
-    std::uniform_int_distribution<> countDist(1, 4);
     std::uniform_int_distribution<> itemDist(1, 7); // 1-7 (ItemType enum)
 
-    int count = countDist(gen);
+    int count = 3;
     for (int i=0; i<count; ++i) {
-        if (p1Items.size() < 8) p1Items.push_back((ItemType)itemDist(gen));
-        if (p2Items.size() < 8) p2Items.push_back((ItemType)itemDist(gen));
+        if (p1Items.size() < 6) p1Items.push_back((ItemType)itemDist(gen));
+        if (p2Items.size() < 6) p2Items.push_back((ItemType)itemDist(gen));
     }
     lastMessage += " Items distributed.";
 }
@@ -73,8 +81,14 @@ void GameSession::useItem(const std::string& player, ItemType item) {
             lastMessage += "But gun was empty!";
         }
     } else if (item == ITEM_CIGARETTES) {
-        lastMessage += "CIGARETTES. +1 HP.";
-        if (player == p1Name) hp1++; else hp2++;
+        lastMessage += "CIGARETTES. ";
+        if (player == p1Name) {
+            if (hp1 < 5) { hp1++; lastMessage += "+1 HP."; }
+            else lastMessage += "HP Full!";
+        } else {
+            if (hp2 < 5) { hp2++; lastMessage += "+1 HP."; }
+            else lastMessage += "HP Full!";
+        }
     } else if (item == ITEM_HANDCUFFS) {
         lastMessage += "HANDCUFFS. Opponent skips next turn.";
         if (player == p1Name) p2Handcuffed = true; else p1Handcuffed = true;
@@ -101,7 +115,13 @@ void GameSession::useItem(const std::string& player, ItemType item) {
         static std::mt19937 gen(rd());
         if (gen() % 2 == 0) {
             lastMessage += "Healed 2 HP!";
-            if (player == p1Name) hp1 += 2; else hp2 += 2;
+            if (player == p1Name) {
+                hp1 += 2; 
+                if (hp1 > 5) hp1 = 5;
+            } else {
+                hp2 += 2;
+                if (hp2 > 5) hp2 = 5;
+            }
         } else {
             lastMessage += "Lost 1 HP!";
             if (player == p1Name) hp1--; else hp2--;
@@ -191,6 +211,16 @@ GameStatePacket GameSession::getState() const {
     pkt.p1Hp = hp1;
     pkt.p2Hp = hp2;
     pkt.shellsRemaining = (int)shells.size();
+    
+    // Count currently remaining
+    int currLive = 0;
+    int currBlank = 0;
+    for (bool s : shells) {
+        if (s) currLive++; else currBlank++;
+    }
+    pkt.liveCount = currLive;
+    pkt.blankCount = currBlank;
+    
     pkt.gameOver = gameOver;
     
     // Fill inventory
@@ -204,6 +234,8 @@ GameStatePacket GameSession::getState() const {
     pkt.knifeActive = knifeActive;
     
     strncpy(pkt.currentTurnUser, currentTurn.c_str(), 32);
+    strncpy(pkt.p1Name, p1Name.c_str(), 32);
+    strncpy(pkt.p2Name, p2Name.c_str(), 32);
     strncpy(pkt.message, lastMessage.c_str(), 64);
     if (gameOver) {
         strncpy(pkt.winner, winner.c_str(), 32);
@@ -223,8 +255,8 @@ bool GameSession::isGameOver() const {
 }
 
 void GameSession::startRound() {
-    hp1 = 3;
-    hp2 = 3;
+    hp1 = 5;
+    hp2 = 5;
     p1Items.clear();
     p2Items.clear();
     lastMessage = "New Round Started!";

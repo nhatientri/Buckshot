@@ -28,6 +28,8 @@ private:
     int p1Fd, p2Fd;
     int hp1, hp2;
     std::deque<bool> shells; // true = live, false = blank
+    int totalLive;
+    int totalBlank;
     std::string currentTurn;
     std::string lastMessage;
     bool gameOver;
