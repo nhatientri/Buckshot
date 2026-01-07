@@ -36,7 +36,139 @@ std::string GetItemName(uint8_t itemType) {
     }
 }
 
+// Helper for Game Screen
+void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient& client, bool readOnly = false) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(0, 19));
+    ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - 19));
+    ImGui::Begin("Game Board", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+    
+    bool amIP1 = (client.getUsername() == std::string(s.p1Name));
+    
+    // Aliases
+    int myHp = amIP1 ? s.p1Hp : s.p2Hp;
+    int oppHp = amIP1 ? s.p2Hp : s.p1Hp;
+    bool myHandcuffed = amIP1 ? s.p1Handcuffed : s.p2Handcuffed;
+    bool oppHandcuffed = amIP1 ? s.p2Handcuffed : s.p1Handcuffed;
+    const uint8_t* myInv = amIP1 ? s.p1Inventory : s.p2Inventory;
+    const uint8_t* oppInv = amIP1 ? s.p2Inventory : s.p1Inventory;
+    
+    // TOP: Opponent
+    ImGui::Text("OPPONENT (%s): HP [%d] | Items:", amIP1 ? s.p2Name : s.p1Name, oppHp);
+    for(int i=0;i<8;++i) {
+         if (oppInv[i]) {
+             ImGui::SameLine(); 
+             ImGui::Text("[%s]", GetItemName(oppInv[i]).c_str());
+         }
+    }
+    if (oppHandcuffed) ImGui::TextColored(ImVec4(1,0,0,1), "HANDCUFFED");
+    
+    ImGui::Separator();
+    
+    // CENTER: Table
+    ImGui::Text("Shells in Shotgun: %d", s.shellsRemaining);
+    ImGui::TextDisabled("Remaining: %d Live, %d Blank", s.liveCount, s.blankCount);
+    if (s.knifeActive) ImGui::TextColored(ImVec4(1,0,0,1), "KNIFE ACTIVE (Double Damage)");
+    
+    ImGui::Separator();
+    
+    // BOTTOM: Me
+    ImGui::Text("YOU (%s): HP [%d] | Items:", amIP1 ? s.p1Name : s.p2Name, myHp);
+    for(int i=0;i<8;++i) {
+        if (myInv[i]) {
+             ImGui::SameLine(); 
+             ImGui::PushID(i); 
+             std::string label = GetItemName(myInv[i]);
+             if (readOnly) {
+                 ImGui::Button(label.c_str()); // Click does nothing
+             } else {
+                 if (ImGui::Button(label.c_str())) {
+                     client.sendMove(Buckshot::USE_ITEM, (Buckshot::ItemType)myInv[i]);
+                 }
+             }
+             ImGui::PopID();
+        }
+    }
+    if (myHandcuffed) ImGui::TextColored(ImVec4(1,0,0,1), "HANDCUFFED");
+    
+    ImGui::Separator();
+    
+    // ACTIONS
+    if (s.gameOver) {
+        ImGui::Text("GAME OVER! Winner: %s", s.winner);
+        
+        // Show Elo change if relevant
+        std::string p1Name = s.p1Name;
+        std::string p2Name = s.p2Name;
+        std::string myName = client.getUsername();
+        
+        int myDelta = 0;
+        if (myName == p1Name) myDelta = s.p1EloChange;
+        else if (myName == p2Name) myDelta = s.p2EloChange;
+        
+        if (myDelta > 0) ImGui::TextColored(ImVec4(0,1,0,1), "Elo: +%d", myDelta);
+        else if (myDelta < 0) ImGui::TextColored(ImVec4(1,0,0,1), "Elo: %d", myDelta); 
+        else ImGui::Text("Elo: No Change");
+        
+        if (!readOnly) {
+            if (ImGui::Button("Back to Lobby")) {
+                client.resetGame();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Rematch")) {
+                std::string myName = client.getUsername();
+                std::string opponentName = (myName == std::string(s.p1Name)) ? s.p2Name : s.p1Name;
+                client.resetGame();
+                client.sendChallenge(opponentName);
+            }
+        }
+    } else {
+        ImGui::Text("Turn: %s", s.currentTurnUser);
+        ImGui::SameLine();
+        
+         // Interpolate time
+        auto now = std::chrono::steady_clock::now();
+        auto lastUpdate = client.getLastStateUpdateTime();
+        int elapsedSinceUpdate = std::chrono::duration_cast<std::chrono::seconds>(now - lastUpdate).count();
+        int currentVisualTime = s.turnTimeRemaining - elapsedSinceUpdate;
+        if (currentVisualTime < 0) currentVisualTime = 0;
+
+        if (currentVisualTime <= 10) {
+            ImGui::TextColored(ImVec4(1, 0, 0, 1), "(%ds)", currentVisualTime);
+        } else {
+             ImGui::Text("(%ds)", currentVisualTime);
+        }
+
+        if (!readOnly) {
+            if (client.getUsername() == std::string(s.currentTurnUser)) {
+                if (ImGui::Button("SHOOT OPPONENT")) client.sendMove(Buckshot::SHOOT_OPPONENT);
+                ImGui::SameLine();
+                if (ImGui::Button("SHOOT SELF")) client.sendMove(Buckshot::SHOOT_SELF);
+                
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(0.0f, 0.7f, 0.7f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, (ImVec4)ImColor::HSV(0.0f, 0.8f, 0.8f));
+                if (ImGui::Button("SURRENDER")) {
+                    client.sendResign();
+                }
+                ImGui::PopStyleColor(3);
+            } else {
+                 ImGui::TextDisabled("Waiting for opponent...");
+            }
+        } else {
+            ImGui::TextDisabled("(Replay Mode - Read Only)");
+        }
+    }
+    
+    ImGui::Separator();
+    ImGui::TextWrapped("Log: %s", s.message);
+    
+    ImGui::End();
+}
+
 int main(int argc, char** argv) {
+    // ... SDL Setup omitted ...
     // Setup SDL
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0) {
         std::cerr << "Error: " << SDL_GetError() << std::endl;
@@ -74,8 +206,6 @@ int main(int argc, char** argv) {
     Buckshot::NetworkClient client;
     if (!client.connectToServer("127.0.0.1", 8080)) {
         std::cerr << "Failed to connect to server!" << std::endl;
-        // In real app we might show a 'connect' screen, but failing fast for now
-        // return 1; 
     } else {
         std::cout << "GUI: Connected to server successfully!" << std::endl;
     }
@@ -84,6 +214,12 @@ int main(int argc, char** argv) {
     char usernameBuf[32] = "";
     char passwordBuf[32] = "";
     bool showLeaderboard = false;
+    
+    // Replay State
+    bool showReplayBrowser = false;
+    bool showReplayViewer = false;
+    int replayIndex = 0;
+    
     std::string currentStatusMsg = "";
     
     bool done = false;
@@ -153,6 +289,11 @@ int main(int argc, char** argv) {
                         client.getLeaderboard();
                         showLeaderboard = true;
                     }
+                    if (ImGui::MenuItem("Replays")) {
+                        client.requestReplayList();
+                        showReplayBrowser = true;
+                        showReplayViewer = false;
+                    }
                     ImGui::EndMenu();
                 }
                 ImGui::SameLine(ImGui::GetWindowWidth() - 200);
@@ -168,131 +309,110 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Refresh")) client.getLeaderboard();
                 ImGui::End();
             }
-
-            if (!gs.inGame || gs.state.gameOver) {
-                // LOBBY
-                ImGui::SetNextWindowPos(ImVec2(0, 19)); // Below menu bar
-                ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - 19));
-                ImGui::Begin("Lobby", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-                if (ImGui::Button("Refresh List")) client.refreshList();
-                
+            
+            // REPLAY BROWSER
+            if (showReplayBrowser) {
+                ImGui::Begin("Replay Browser", &showReplayBrowser);
+                if (ImGui::Button("Refresh")) client.requestReplayList();
                 ImGui::Separator();
-                ImGui::Text("Online Users:");
-                auto users = client.getUserList();
-                for (const auto& u : users) {
-                    if (u == client.getUsername()) continue; // Don't challenge self
-                    ImGui::PushID(u.c_str());
-                    if (ImGui::Button("Challenge")) {
-                        client.sendChallenge(u);
+                
+                auto list = client.getReplayList();
+                for (const auto& f : list) {
+                    if (ImGui::Button(("Watch " + f).c_str())) {
+                        client.requestReplayDownload(f);
                     }
-                    ImGui::SameLine();
-                    ImGui::Text("%s", u.c_str());
-                    ImGui::PopID();
                 }
                 
-                ImGui::Separator();
-                ImGui::Text("Incoming Challenges:");
-                auto challenges = client.getPendingChallenges();
-                for (size_t i = 0; i < challenges.size(); ++i) {
-                    const auto& c = challenges[i];
-                    ImGui::PushID(i);
-                    ImGui::Text("From: %s", c.c_str());
-                    ImGui::SameLine();
-                    if (ImGui::Button("Accept")) {
-                        client.acceptChallenge(c);
-                        // NetworkClient removes it automatically? 
-                        // Actually acceptChallenge just sends packet. 
-                        // We should probably remove it from list after accepting?
-                        // But accepting triggers GameStart usually.
-                        // For now let's just send packet.
-                        client.removeChallenge(i); // Remove locally
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Decline")) {
-                        client.removeChallenge(i); // Just remove locally
-                    }
-                    ImGui::PopID();
+                if (client.hasReplayData()) {
+                    showReplayBrowser = false;
+                    showReplayViewer = true;
+                    replayIndex = 0;
                 }
                 ImGui::End();
             }
             
-            if (gs.inGame) {
-                // GAME SCREEN
-                ImGui::SetNextWindowPos(ImVec2(0, 19));
-                ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - 19));
-                ImGui::Begin("Game Board", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-                
-                auto& s = gs.state;
-                bool amIP1 = (client.getUsername() == std::string(s.p1Name));
-                
-                // Aliases for readability
-                int myHp = amIP1 ? s.p1Hp : s.p2Hp;
-                int oppHp = amIP1 ? s.p2Hp : s.p1Hp;
-                bool myHandcuffed = amIP1 ? s.p1Handcuffed : s.p2Handcuffed;
-                bool oppHandcuffed = amIP1 ? s.p2Handcuffed : s.p1Handcuffed;
-                uint8_t* myInv = amIP1 ? s.p1Inventory : s.p2Inventory;
-                uint8_t* oppInv = amIP1 ? s.p2Inventory : s.p1Inventory;
-                
-                // TOP: Opponent
-                ImGui::Text("OPPONENT (%s): HP [%d] | Items:", amIP1 ? s.p2Name : s.p1Name, oppHp);
-                for(int i=0;i<8;++i) {
-                     if (oppInv[i]) {
-                         ImGui::SameLine(); 
-                         ImGui::Text("[%s]", GetItemName(oppInv[i]).c_str());
+            // REPLAY VIEWER
+            if (showReplayViewer) {
+                 auto data = client.getReplayData();
+                 if (data.empty()) {
+                     ImGui::Text("Error: No Replay Data");
+                     if (ImGui::Button("Close")) showReplayViewer = false;
+                 } else {
+                     // Playback Controls
+                     ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - 60));
+                     ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, 60));
+                     ImGui::Begin("Playback Controls", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+                     
+                     if (ImGui::Button("<< Prev") && replayIndex > 0) replayIndex--;
+                     ImGui::SameLine();
+                     ImGui::Text("Move %d / %lu", replayIndex + 1, data.size());
+                     ImGui::SameLine();
+                     if (ImGui::Button("Next >>") && replayIndex < (int)data.size() - 1) replayIndex++;
+                     ImGui::SameLine();
+                     if (ImGui::Button("Exit Replay")) showReplayViewer = false;
+                     
+                     ImGui::End();
+                     
+                     // Show Game Board
+                     if (replayIndex >= 0 && replayIndex < data.size()) {
+                         ShowGameScreen(data[replayIndex], client, true);
                      }
-                }
-                if (oppHandcuffed) ImGui::TextColored(ImVec4(1,0,0,1), "HANDCUFFED");
-                
-                ImGui::Separator();
-                
-                // CENTER: Table
-                ImGui::Text("Shells in Shotgun: %d", s.shellsRemaining);
-                ImGui::TextDisabled("Remaining: %d Live, %d Blank", s.liveCount, s.blankCount);
-                if (s.knifeActive) ImGui::TextColored(ImVec4(1,0,0,1), "KNIFE ACTIVE (Double Damage)");
-                
-                ImGui::Separator();
-                
-                // BOTTOM: Me
-                ImGui::Text("YOU (%s): HP [%d] | Items:", amIP1 ? s.p1Name : s.p2Name, myHp);
-                for(int i=0;i<8;++i) {
-                    if (myInv[i]) {
-                         ImGui::SameLine(); 
-                         ImGui::PushID(i); 
-                         std::string label = GetItemName(myInv[i]);
-                         if (ImGui::Button(label.c_str())) {
-                             client.sendMove(Buckshot::USE_ITEM, (Buckshot::ItemType)myInv[i]);
-                         }
-                         ImGui::PopID();
+                 }
+            }
+
+            if (!gs.inGame || gs.state.gameOver) {
+                if (!showReplayViewer) { // Don't show lobby over replay
+                    // LOBBY
+                    ImGui::SetNextWindowPos(ImVec2(0, 19)); // Below menu bar
+                    ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - 19));
+                    ImGui::Begin("Lobby", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+                    if (ImGui::Button("Refresh List")) client.refreshList();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Watch Replays")) {
+                        client.requestReplayList();
+                        showReplayBrowser = true;
                     }
-                }
-                if (myHandcuffed) ImGui::TextColored(ImVec4(1,0,0,1), "HANDCUFFED");
-                
-                ImGui::Separator();
-                
-                // ACTIONS
-                if (gs.state.gameOver) {
-                    ImGui::Text("GAME OVER! Winner: %s", s.winner);
-                    if (ImGui::Button("Back to Lobby")) {
-                        client.resetGame();
-                    }
-                } else {
-                    ImGui::Text("Turn: %s", s.currentTurnUser);
-                    if (client.getUsername() == std::string(s.currentTurnUser)) {
-                        if (ImGui::Button("SHOOT OPPONENT")) client.sendMove(Buckshot::SHOOT_OPPONENT);
+                    
+                    ImGui::Separator();
+                    ImGui::Text("Online Users:");
+                    auto users = client.getUserList();
+                    for (const auto& u : users) {
+                        if (u == client.getUsername()) continue; // Don't challenge self
+                        ImGui::PushID(u.c_str());
+                        if (ImGui::Button("Challenge")) {
+                            client.sendChallenge(u);
+                        }
                         ImGui::SameLine();
-                        if (ImGui::Button("SHOOT SELF")) client.sendMove(Buckshot::SHOOT_SELF);
-                    } else {
-                         ImGui::TextDisabled("Waiting for opponent...");
+                        ImGui::Text("%s", u.c_str());
+                        ImGui::PopID();
                     }
+                    
+                    ImGui::Separator();
+                    ImGui::Text("Incoming Challenges:");
+                    auto challenges = client.getPendingChallenges();
+                    for (size_t i = 0; i < challenges.size(); ++i) {
+                        const auto& c = challenges[i];
+                        ImGui::PushID(i);
+                        ImGui::Text("From: %s", c.c_str());
+                        ImGui::SameLine();
+                        if (ImGui::Button("Accept")) {
+                            client.acceptChallenge(c);
+                            client.removeChallenge(i); 
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Decline")) {
+                            client.removeChallenge(i); 
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::End();
                 }
-                
-                ImGui::Separator();
-                ImGui::TextWrapped("Log: %s", s.message);
-                
-                ImGui::End();
+            }
+            
+            if (gs.inGame && !showReplayViewer) {
+                 ShowGameScreen(gs.state, client, false);
             }
         }
-
         // Rendering
         ImGui::Render();
         glViewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);

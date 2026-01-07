@@ -7,11 +7,15 @@
 #include <cstring>
 #include <algorithm>
 #include "../common/Protocol.h"
+#include "../common/Protocol.h"
+#include "ReplayManager.h"
+#include <chrono>
 
 namespace Buckshot {
 
 Server::Server(int port) : port(port), running(false), serverSocket(-1) {
     userManager.loadUsers();
+    lastTimeoutCheck = std::chrono::steady_clock::now();
 }
 
 void Server::run() {
@@ -31,7 +35,56 @@ void Server::run() {
             if (sd > max_sd) max_sd = sd;
         }
 
-        int activity = select(max_sd + 1, &readfds, nullptr, nullptr, nullptr);
+        // Timeout Check
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - lastTimeoutCheck).count() >= 1) {
+             lastTimeoutCheck = now;
+             for (auto it = activeGames.begin(); it != activeGames.end();) {
+                 auto& game = *it;
+                 if (game->checkTimeout(30)) { // 30s timeout
+                     std::cout << "Game timed out!" << std::endl;
+                     // Broadcast Game Over
+                     GameStatePacket state = game->getState();
+                     PacketHeader stateHead;
+                     stateHead.command = CMD_GAME_STATE;
+                     stateHead.size = sizeof(GameStatePacket);
+                     
+                     send(game->getP1Fd(), &stateHead, sizeof(stateHead), 0);
+                     send(game->getP1Fd(), &state, sizeof(state), 0);
+                     send(game->getP2Fd(), &stateHead, sizeof(stateHead), 0);
+                     send(game->getP2Fd(), &state, sizeof(state), 0);
+                     
+                     // Record
+                      std::string winner = game->getState().winner; 
+                      std::string p1n = game->getP1Name();
+                      std::string p2n = game->getP2Name();
+                      std::string loser = (winner == p1n) ? p2n : p1n;
+                      
+                      auto deltas = userManager.recordMatch(winner, loser);
+                      int p1Delta = (winner == p1n) ? deltas.first : deltas.second;
+                      int p2Delta = (winner == p2n) ? deltas.first : deltas.second;
+                      game->setEloChanges(p1Delta, p2Delta);
+                      
+                      // Re-broadcast with Elo
+                      state = game->getState();
+                      send(game->getP1Fd(), &stateHead, sizeof(stateHead), 0);
+                      send(game->getP1Fd(), &state, sizeof(state), 0);
+                      send(game->getP2Fd(), &stateHead, sizeof(stateHead), 0);
+                      send(game->getP2Fd(), &state, sizeof(state), 0);
+                      
+                      ReplayManager::saveReplay(p1n, p2n, winner, game->getHistory());
+
+                     it = activeGames.erase(it);
+                 } else {
+                     ++it;
+                 }
+             }
+        }
+
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        int activity = select(max_sd + 1, &readfds, nullptr, nullptr, &tv);
 
         if ((activity < 0) && (errno != EINTR)) {
             std::cerr << "Select error" << std::endl;
@@ -96,7 +149,44 @@ void Server::handleClientActivity(fd_set& readfds) {
             int valread = read(sd, &header, sizeof(PacketHeader));
             
             if (valread == 0) {
-                // Disconnected
+                // Disconnected logic
+                auto game = getGameSession(sd);
+                if (game) {
+                    std::string user = authenticatedUsers[sd];
+                    std::cout << "Player " << user << " disconnected during game." << std::endl;
+                    game->resign(user);
+                    
+                    // Notify other player
+                    GameStatePacket state = game->getState();
+                    PacketHeader stateHead;
+                    stateHead.command = CMD_GAME_STATE;
+                    stateHead.size = sizeof(GameStatePacket);
+                    
+                    int p1 = game->getP1Fd();
+                    int p2 = game->getP2Fd();
+                    int otherFd = (sd == p1) ? p2 : p1;
+                    
+                    // Only send to the connected player
+                    send(otherFd, &stateHead, sizeof(stateHead), 0);
+                    send(otherFd, &state, sizeof(state), 0);
+                    
+                    if (game->isGameOver()) {
+                        std::string winner = game->getState().winner; 
+                        std::string p1n = game->getP1Name();
+                        std::string p2n = game->getP2Name();
+                        std::string loser = (winner == p1n) ? p2n : p1n;
+                        
+                        userManager.recordMatch(winner, loser);
+                        ReplayManager::saveReplay(p1n, p2n, winner, game->getHistory());
+                        
+                        auto gIt = std::find(activeGames.begin(), activeGames.end(), game);
+                        if (gIt != activeGames.end()) {
+                            activeGames.erase(gIt);
+                        }
+                    }
+                }
+
+                // Disconnected cleanup
                 close(sd);
                 std::cout << "Host disconnected, fd " << sd << std::endl;
                 authenticatedUsers.erase(sd);
@@ -254,7 +344,60 @@ void Server::handleClientActivity(fd_set& readfds) {
                                 
                                 send(sd, &stateHead, sizeof(stateHead), 0);
                                 send(sd, &state, sizeof(state), 0);
+
                             }
+                         }
+                    } else if (header.command == CMD_LIST_REPLAYS) {
+                        std::string user = authenticatedUsers[sd];
+                        std::string list = ReplayManager::getReplayList(user);
+                        PacketHeader resp;
+                        resp.command = CMD_LIST_REPLAYS_RESP;
+                        resp.size = list.size();
+                        send(sd, &resp, sizeof(resp), 0);
+                        if (list.size() > 0) send(sd, list.c_str(), list.size(), 0);
+                    } else if (header.command == CMD_GET_REPLAY) {
+                        if (header.size > 0) {
+                            std::string filename(body.begin(), body.end());
+                            auto history = ReplayManager::loadReplay(filename);
+                            
+                            PacketHeader resp;
+                            resp.command = CMD_REPLAY_DATA;
+                            resp.size = history.size() * sizeof(GameStatePacket);
+                            send(sd, &resp, sizeof(resp), 0);
+                            if (resp.size > 0) send(sd, history.data(), resp.size, 0);
+                        }
+                    } else if (header.command == CMD_RESIGN) {
+                         auto game = getGameSession(sd);
+                         if (game) {
+                             std::string user = authenticatedUsers[sd];
+                             game->resign(user);
+                              
+                             // Broadcast State & Game Over
+                             GameStatePacket state = game->getState();
+                             PacketHeader stateHead;
+                             stateHead.command = CMD_GAME_STATE;
+                             stateHead.size = sizeof(GameStatePacket);
+                             
+                             send(game->getP1Fd(), &stateHead, sizeof(stateHead), 0);
+                             send(game->getP1Fd(), &state, sizeof(state), 0);
+                             send(game->getP2Fd(), &stateHead, sizeof(stateHead), 0);
+                             send(game->getP2Fd(), &state, sizeof(state), 0);
+                             
+                             if (game->isGameOver()) {
+                                 // Record Match Result
+                                 std::string winner = game->getState().winner; 
+                                 std::string p1 = game->getP1Name();
+                                 std::string p2 = game->getP2Name();
+                                 std::string loser = (winner == p1) ? p2 : p1;
+                                 
+                                 userManager.recordMatch(winner, loser);
+                                 ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+
+                                  auto it = std::find(activeGames.begin(), activeGames.end(), game);
+                                  if (it != activeGames.end()) {
+                                      activeGames.erase(it);
+                                  }
+                             }
                          }
                     } else if (header.command == CMD_GAME_MOVE) {
                         if (header.size == sizeof(MovePayload)) {
@@ -282,8 +425,21 @@ void Server::handleClientActivity(fd_set& readfds) {
                                     std::string p2 = game->getP2Name();
                                     std::string loser = (winner == p1) ? p2 : p1;
                                     
-                                    userManager.recordMatch(winner, loser);
+                                    auto deltas = userManager.recordMatch(winner, loser);
+                                    int p1Delta = (winner == p1) ? deltas.first : deltas.second;
+                                    int p2Delta = (winner == p2) ? deltas.first : deltas.second;
+                                    game->setEloChanges(p1Delta, p2Delta);
                                     
+                                    // Re-broadcast
+                                    GameStatePacket state = game->getState();
+                                    send(game->getP1Fd(), &stateHead, sizeof(stateHead), 0);
+                                    send(game->getP1Fd(), &state, sizeof(state), 0);
+                                    send(game->getP2Fd(), &stateHead, sizeof(stateHead), 0);
+                                    send(game->getP2Fd(), &state, sizeof(state), 0);
+                                    
+                                    // SAVE REPLAY
+                                    ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+
                                     // Remove game from active list? 
                                     // For now, let's just keep it (memory leak in long run but okay for demo) 
                                     // OR remove it: 

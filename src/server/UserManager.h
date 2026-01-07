@@ -20,7 +20,8 @@ public:
     void loadUsers();
     
     // Post-Game
-    void recordMatch(const std::string& winner, const std::string& loser);
+    // Returns pair<int, int> -> (winnerDelta, loserDelta)
+    std::pair<int, int> recordMatch(const std::string& winner, const std::string& loser);
     std::string getLeaderboard();
 
 private:

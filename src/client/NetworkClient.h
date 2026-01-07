@@ -4,6 +4,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 #include "../common/Protocol.h"
 
 namespace Buckshot {
@@ -29,6 +30,7 @@ public:
     void sendChallenge(const std::string& target);
     void acceptChallenge(const std::string& target);
     void sendMove(MoveType type, ItemType item = ITEM_NONE);
+    void sendResign();
     
     // State Access (Thread Safe)
     bool isConnected() const;
@@ -42,7 +44,15 @@ public:
     void removeChallenge(size_t index); // Remove locally
     
     ClientGameState getGameState();
+    std::chrono::steady_clock::time_point getLastStateUpdateTime() const;
     void resetGame();
+    
+    // Replay
+    void requestReplayList();
+    std::vector<std::string> getReplayList(); // Returns cached list
+    void requestReplayDownload(const std::string& filename);
+    bool hasReplayData();
+    std::vector<GameStatePacket> getReplayData(); // Consume replay data
     
     // Status flags used by UI to show popups/errors
     std::atomic<bool> loginSuccess;
@@ -65,8 +75,14 @@ private:
     std::string lastStatusMessage; // For bottom bar or errors
     std::vector<std::string> onlineUsers;
     std::string leaderboardText;
+    
+    std::vector<std::string> replayList;
+    std::vector<GameStatePacket> currentReplay;
+    bool replayReady;
+    
     std::vector<std::string> challenges;
     ClientGameState gameState;
+    std::chrono::steady_clock::time_point lastStateUpdate;
 };
 
 }

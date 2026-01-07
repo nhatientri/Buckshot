@@ -33,6 +33,15 @@ enum Command : uint8_t {
     CMD_GAME_STATE = 22, // Update board
     CMD_GAME_RESULT = 23, // Win/Loss/Draw
     
+    // Replay
+    CMD_LIST_REPLAYS   = 40,
+    CMD_LIST_REPLAYS_RESP = 41,
+    CMD_GET_REPLAY     = 42,
+    CMD_REPLAY_DATA    = 43,
+
+    // Resign
+    CMD_RESIGN         = 50,
+
     CMD_ERROR = 99
 };
 
@@ -91,6 +100,9 @@ struct GameStatePacket {
     char message[64]; // "Player1 shot Self! It was a Blank."
     bool gameOver;
     char winner[32];
+    int32_t turnTimeRemaining; // Seconds remaining for current turn
+    int32_t p1EloChange; // Delta for P1
+    int32_t p2EloChange; // Delta for P2
 };
 
 // Response codes

@@ -66,11 +66,11 @@ User* UserManager::getUser(const std::string& username) {
     return nullptr;
 }
 
-void UserManager::recordMatch(const std::string& winnerName, const std::string& loserName) {
+std::pair<int, int> UserManager::recordMatch(const std::string& winnerName, const std::string& loserName) {
     User* winner = getUser(winnerName);
     User* loser = getUser(loserName);
     
-    if (!winner || !loser) return;
+    if (!winner || !loser) return {0, 0};
     
     // Elo Calculation (K=32)
     // Ra' = Ra + K * (Sa - Ea)
@@ -96,6 +96,7 @@ void UserManager::recordMatch(const std::string& winnerName, const std::string& 
     logMatch(winnerName, loserName, winner->elo, loser->elo);
     
     std::cout << "Match Recorded: " << winnerName << " (+" << winnerDelta << ") vs " << loserName << " (" << loserDelta << ")" << std::endl;
+    return {winnerDelta, loserDelta};
 }
 
 std::string UserManager::getLeaderboard() {

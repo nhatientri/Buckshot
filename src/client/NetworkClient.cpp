@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
+#include <algorithm>
 
 namespace Buckshot {
 
@@ -106,8 +107,11 @@ void NetworkClient::processPacket(const PacketHeader& header, const std::vector<
     } else if (header.command == CMD_CHALLENGE_REQ) {
         if (body.size() >= sizeof(ChallengePacket)) {
             ChallengePacket* pkt = (ChallengePacket*)body.data();
-            challenges.push_back(pkt->targetUser); // This is the challenger name
-            lastStatusMessage = "New Challenge from " + std::string(pkt->targetUser);
+            std::string challenger = pkt->targetUser;
+            if (std::find(challenges.begin(), challenges.end(), challenger) == challenges.end()) {
+                challenges.push_back(challenger);
+                lastStatusMessage = "New Challenge from " + challenger;
+            }
         }
     } else if (header.command == CMD_CHALLENGE_RESP) {
         // Game start logic handles usually by GameState, but we can note it
@@ -116,12 +120,30 @@ void NetworkClient::processPacket(const PacketHeader& header, const std::vector<
         if (body.size() >= sizeof(GameStatePacket)) {
             gameState.inGame = true;
             gameState.state = *(GameStatePacket*)body.data();
+            lastStateUpdate = std::chrono::steady_clock::now();
             
             if (gameState.state.gameOver) {
                 lastStatusMessage = "Game Over. Winner: " + std::string(gameState.state.winner);
                  // Don't set inGame=false immediately, let player see results
             }
         }
+    } else if (header.command == CMD_LIST_REPLAYS_RESP) {
+        std::string s(body.begin(), body.end());
+        replayList.clear();
+        std::stringstream ss(s);
+        std::string u;
+        while (std::getline(ss, u)) {
+            if (!u.empty()) replayList.push_back(u);
+        }
+    } else if (header.command == CMD_REPLAY_DATA) {
+        int count = header.size / sizeof(GameStatePacket);
+        currentReplay.clear();
+        if (count > 0) {
+            GameStatePacket* pkts = (GameStatePacket*)body.data();
+            for(int i=0; i<count; ++i) currentReplay.push_back(pkts[i]);
+        }
+        replayReady = true;
+        lastStatusMessage = "Replay Downloaded!";
     }
 }
 
@@ -192,6 +214,11 @@ void NetworkClient::sendMove(MoveType type, ItemType item) {
     send(socketFd, &p, sizeof(p), 0);
 }
 
+void NetworkClient::sendResign() {
+    PacketHeader header = {0, CMD_RESIGN};
+    send(socketFd, &header, sizeof(header), 0);
+}
+
 // Getters
 bool NetworkClient::isConnected() const { return connected; }
 bool NetworkClient::isLoggedIn() const { return loggedIn; }
@@ -223,10 +250,42 @@ ClientGameState NetworkClient::getGameState() {
     return gameState;
 }
 
+std::chrono::steady_clock::time_point NetworkClient::getLastStateUpdateTime() const {
+    return lastStateUpdate;
+}
+
 void NetworkClient::resetGame() {
     std::lock_guard<std::mutex> lock(dataMutex);
     gameState.inGame = false;
     memset(&gameState.state, 0, sizeof(GameStatePacket));
+}
+
+void NetworkClient::requestReplayList() {
+    PacketHeader header = {0, CMD_LIST_REPLAYS};
+    send(socketFd, &header, sizeof(header), 0);
+}
+
+std::vector<std::string> NetworkClient::getReplayList() {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    return replayList;
+}
+
+void NetworkClient::requestReplayDownload(const std::string& filename) {
+    PacketHeader header = {(uint32_t)filename.size(), CMD_GET_REPLAY};
+    send(socketFd, &header, sizeof(header), 0);
+    send(socketFd, filename.c_str(), filename.size(), 0);
+}
+
+bool NetworkClient::hasReplayData() {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    bool r = replayReady;
+    replayReady = false; // consume check
+    return r;
+}
+
+std::vector<GameStatePacket> NetworkClient::getReplayData() {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    return currentReplay;
 }
 
 }

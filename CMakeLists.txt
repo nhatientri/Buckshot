@@ -27,7 +27,7 @@ set(IMGUI_SOURCES
 include_directories(${IMGUI_DIR} ${IMGUI_DIR}/backends)
 
 # Server Target
-add_executable(server src/server/main.cpp src/server/Server.cpp src/server/UserManager.cpp src/server/GameSession.cpp ${COMMON_SOURCES})
+add_executable(server src/server/main.cpp src/server/Server.cpp src/server/UserManager.cpp src/server/GameSession.cpp src/server/ReplayManager.cpp ${COMMON_SOURCES})
 target_link_libraries(server PRIVATE pthread)
 
 # Client Console Target

@@ -11,6 +11,7 @@ GameSession::GameSession(const std::string& p1, const std::string& p2, int fd1, 
       p1Handcuffed(false), p2Handcuffed(false), knifeActive(false), inverterActive(false) {
     
     currentTurn = p1Name; // P1 starts
+    lastActionTime = std::chrono::steady_clock::now();
     loadShells();
 }
 
@@ -41,7 +42,7 @@ void GameSession::loadShells() {
         if (s) totalLive++; else totalBlank++;
     }
     
-    lastMessage = "Loaded " + std::to_string(count) + " shells (" + std::to_string(totalLive) + " Live, " + std::to_string(totalBlank) + " Blank)";
+    lastMessage += " Loaded " + std::to_string(count) + " shells (" + std::to_string(totalLive) + " Live, " + std::to_string(totalBlank) + " Blank)";
     
     distributeItems();
 }
@@ -96,7 +97,7 @@ void GameSession::useItem(const std::string& player, ItemType item) {
         lastMessage += "MAGNIFYING GLASS. ";
         if (!shells.empty()) {
             bool next = shells.front();
-            if (inverterActive) next = !next; // Show the true state? Or inverted? Usually true state of shell?
+            // Inverter now modifies shells directly, so no need to check flag here
             // Actually Inverter flips it physically when fired? Or flips the nature?
             // "Inverter (Flips the next shell)" -> implying physical change or logical swap?
             // Let's assume logical swap for the next shot. Glass should probably show the *current* state.
@@ -108,7 +109,9 @@ void GameSession::useItem(const std::string& player, ItemType item) {
         knifeActive = true;
     } else if (item == ITEM_INVERTER) {
         lastMessage += "INVERTER. Polarity flipped.";
-        inverterActive = !inverterActive; // Toggle? Or just set? Usually one-time use for next shell.
+        if (!shells.empty()) {
+            shells.front() = !shells.front();
+        }
     } else if (item == ITEM_EXPIRED_MEDICINE) {
         lastMessage += "MEDICINE. ";
         static std::random_device rd;
@@ -137,6 +140,8 @@ void GameSession::useItem(const std::string& player, ItemType item) {
 void GameSession::processMove(const std::string& player, MoveType move, ItemType item) {
     if (gameOver || player != currentTurn) return;
     
+    lastActionTime = std::chrono::steady_clock::now();
+    
     if (shells.empty()) loadShells(); 
 
     if (move == USE_ITEM) {
@@ -148,10 +153,8 @@ void GameSession::processMove(const std::string& player, MoveType move, ItemType
     bool isLive = shells.front();
     shells.pop_front();
     
-    if (inverterActive) {
-        isLive = !isLive;
-        inverterActive = false; // Consumed
-    }
+    // Inverter logic removed: data is modified directly in useItem
+    // if (inverterActive) { ... }
     
     int damage = knifeActive ? 2 : 1;
     knifeActive = false; // Consumed
@@ -204,6 +207,44 @@ void GameSession::processMove(const std::string& player, MoveType move, ItemType
         loadShells();
         lastMessage += " (Reloading...)";
     }
+    
+    // Record history
+    history.push_back(getState());
+}
+
+void GameSession::resign(const std::string& player) {
+    if (gameOver) return;
+    
+    gameOver = true;
+    if (player == p1Name) {
+        winner = p2Name;
+        lastMessage = p1Name + " RESIGNED. " + p2Name + " Wins!";
+        hp1 = 0; // Force HP to 0 for visual clarity
+    } else {
+        winner = p1Name;
+        lastMessage = p2Name + " RESIGNED. " + p1Name + " Wins!";
+        hp2 = 0;
+    }
+    
+    history.push_back(getState());
+}
+
+bool GameSession::checkTimeout(long long timeoutSeconds) {
+    if (gameOver) return false;
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastActionTime).count();
+    
+    if (elapsed > timeoutSeconds) {
+        resign(currentTurn); // Current turn player loses
+        lastMessage += " (AFK TIMEOUT)"; 
+        return true;
+    }
+    return false;
+}
+
+void GameSession::setEloChanges(int p1Delta, int p2Delta) {
+    eloChangeP1 = p1Delta;
+    eloChangeP2 = p2Delta;
 }
 
 GameStatePacket GameSession::getState() const {
@@ -242,6 +283,16 @@ GameStatePacket GameSession::getState() const {
     } else {
         memset(pkt.winner, 0, 32);
     }
+    
+    // Time remaining
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastActionTime).count();
+    pkt.turnTimeRemaining = (int32_t)(30 - elapsed);
+    if (pkt.turnTimeRemaining < 0) pkt.turnTimeRemaining = 0;
+    
+    pkt.p1EloChange = eloChangeP1;
+    pkt.p2EloChange = eloChangeP2;
+
     return pkt;
 }
 
