@@ -61,6 +61,9 @@ public:
     void sendJoinQueue();
     void sendLeaveQueue();
     
+    // Pause
+    void sendTogglePause();
+    
     // Status flags used by UI to show popups/errors
     std::atomic<bool> loginSuccess;
     std::atomic<bool> loginFailed;

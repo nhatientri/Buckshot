@@ -427,7 +427,24 @@ void Server::handleClientActivity(fd_set& readfds) {
                             }
                           }
                      } else if (header.command == CMD_PLAY_AI) {
-                         // Start game
+                         // Check if already in game
+                         if (getGameSession(sd) != nullptr) {
+                             std::cout << "User " << authenticatedUsers[sd] << " already in game. Ignoring PlayAi request." << std::endl;
+                         } else {
+                             // Start game
+                             std::string p1Name = authenticatedUsers[sd];
+                             std::string p2Name = "The Dealer";
+                             std::cout << "Starting AI Game for " << p1Name << std::endl;
+                             auto newGame = std::make_shared<GameSession>(p1Name, p2Name, sd, -1);
+                             activeGames.push_back(newGame);
+                             
+                             GameStatePacket state = newGame->getState();
+                             PacketHeader stateHead;
+                             stateHead.command = CMD_GAME_STATE;
+                             stateHead.size = sizeof(GameStatePacket);
+                             send(sd, &stateHead, sizeof(stateHead), 0);
+                             send(sd, &state, sizeof(state), 0);
+                         }
                          std::string p1Name = authenticatedUsers[sd];
                          std::string p2Name = "The Dealer";
                          std::cout << "Starting AI Game for " << p1Name << std::endl;
@@ -560,7 +577,7 @@ void Server::handleClientActivity(fd_set& readfds) {
                         resp.size = 0;
                         send(sd, &resp, sizeof(resp), 0);
                         
-                    } else if (header.command == CMD_QUEUE_LEAVE) {
+                     } else if (header.command == CMD_QUEUE_LEAVE) {
                          std::string user = authenticatedUsers[sd];
                          auto it = std::find(matchmakingQueue.begin(), matchmakingQueue.end(), user);
                          if (it != matchmakingQueue.end()) {
@@ -571,6 +588,21 @@ void Server::handleClientActivity(fd_set& readfds) {
                          resp.command = CMD_OK;
                          resp.size = 0;
                          send(sd, &resp, sizeof(resp), 0);
+                    } else if (header.command == CMD_TOGGLE_PAUSE) {
+                         auto game = getGameSession(sd);
+                         if (game && game->isAiGame()) {
+                             game->togglePause(); // Toggle logic
+                             
+                             // Broadcast new state
+                             GameStatePacket state = game->getState();
+                             PacketHeader stateHead;
+                             stateHead.command = CMD_GAME_STATE;
+                             stateHead.size = sizeof(GameStatePacket);
+                             
+                             // Send to player (and AI technically, but AI is internal)
+                             send(sd, &stateHead, sizeof(stateHead), 0);
+                             send(sd, &state, sizeof(state), 0);
+                         }
                     }
                 }
             } else {

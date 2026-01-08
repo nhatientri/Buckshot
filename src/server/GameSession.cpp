@@ -143,7 +143,7 @@ void GameSession::useItem(const std::string& player, ItemType item) {
 }
 
 void GameSession::processMove(const std::string& player, MoveType move, ItemType item) {
-    if (gameOver || player != currentTurn) return;
+    if (gameOver || player != currentTurn || paused) return;
     
     lastActionTime = std::chrono::steady_clock::now();
     
@@ -246,6 +246,7 @@ void GameSession::resign(const std::string& player) {
 
 bool GameSession::checkTimeout(long long timeoutSeconds) {
     if (gameOver) return false;
+    if (paused) return false;
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastActionTime).count();
     
@@ -292,7 +293,7 @@ GameStatePacket GameSession::getState() const {
     strncpy(pkt.currentTurnUser, currentTurn.c_str(), 32);
     strncpy(pkt.p1Name, p1Name.c_str(), 32);
     strncpy(pkt.p2Name, p2Name.c_str(), 32);
-    strncpy(pkt.message, lastMessage.c_str(), 64);
+    strncpy(pkt.message, lastMessage.c_str(), 128);
     if (gameOver) {
         strncpy(pkt.winner, winner.c_str(), 32);
     } else {
@@ -300,19 +301,25 @@ GameStatePacket GameSession::getState() const {
     }
     
     // Time remaining
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastActionTime).count();
-    pkt.turnTimeRemaining = (int32_t)(30 - elapsed);
-    if (pkt.turnTimeRemaining < 0) pkt.turnTimeRemaining = 0;
+    if (paused) {
+        pkt.turnTimeRemaining = pausedTimeRemaining;
+    } else {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastActionTime).count();
+        pkt.turnTimeRemaining = (int32_t)(30 - elapsed);
+        if (pkt.turnTimeRemaining < 0) pkt.turnTimeRemaining = 0;
+    }
     
     pkt.p1EloChange = eloChangeP1;
     pkt.p2EloChange = eloChangeP2;
+    pkt.isPaused = paused;
 
     return pkt;
 }
 
 bool GameSession::executeAiTurn() {
     if (gameOver) return false;
+    if (paused) return false;
     if (currentTurn != p2Name) return false;
     
     // Simple delay (assuming this is called ~60 times a sec? No, server loop is tight)
@@ -431,6 +438,29 @@ void GameSession::startRound() {
     itemsUsedThisTurn = 0;
     lastMessage = "New Round Started!";
     loadShells();
+}
+
+void GameSession::togglePause() {
+    paused = !paused;
+    auto now = std::chrono::steady_clock::now();
+    
+    if (paused) {
+        // Calculate remaining time and freeze it
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastActionTime).count();
+        pausedTimeRemaining = (int32_t)(30 - elapsed);
+        if (pausedTimeRemaining < 0) pausedTimeRemaining = 0;
+        
+        lastMessage += " (PAUSED)";
+    } else {
+        // Resume: Shift lastActionTime so that (now - lastActionTime) equals the resumed duration
+        // We want: 30 - (now - new_lastActionTime) = pausedTimeRemaining
+        // => now - new_lastActionTime = 30 - pausedTimeRemaining
+        // => new_lastActionTime = now - (30 - pausedTimeRemaining)
+        
+        lastActionTime = now - std::chrono::seconds(30 - pausedTimeRemaining);
+
+        lastMessage += " (RESUMED)";
+    }
 }
 
 }

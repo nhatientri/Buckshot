@@ -50,6 +50,9 @@ enum Command : uint8_t {
     CMD_QUEUE_JOIN     = 60,
     CMD_QUEUE_LEAVE    = 61,
 
+    // Pause
+    CMD_TOGGLE_PAUSE   = 70,
+
     CMD_ERROR = 99
 };
 
@@ -60,8 +63,6 @@ struct LoginRequest {
     char username[32];
     char password[32];
 };
-
-
 
 struct ChallengePacket {
     char targetUser[32]; // Who you challenge, or who challenged you
@@ -105,12 +106,13 @@ struct GameStatePacket {
     char currentTurnUser[32]; // Username of whose turn it is
     char p1Name[32];
     char p2Name[32];
-    char message[64]; // "Player1 shot Self! It was a Blank."
+    char message[128]; // "Player1 shot Self! It was a Blank."
     bool gameOver;
     char winner[32];
     int32_t turnTimeRemaining; // Seconds remaining for current turn
     int32_t p1EloChange; // Delta for P1
     int32_t p2EloChange; // Delta for P2
+    bool isPaused;
 };
 
 // Response codes

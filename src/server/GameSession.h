@@ -29,8 +29,13 @@ public:
     std::vector<GameStatePacket> getHistory() const { return history; }
     
     // AI
+    // AI
     bool isAiGame() const { return p2Fd == -1; }
     bool executeAiTurn();
+    
+    // Pause
+    void togglePause();
+    bool isPaused() const { return paused; }
 
 private:
     std::string p1Name, p2Name;
@@ -58,6 +63,8 @@ private:
     bool p2Handcuffed;
     bool knifeActive;
     bool inverterActive; // Flips the next shell logic (virtual flip)
+    bool paused = false;
+    int32_t pausedTimeRemaining = 0; // Stored time when paused
 
     void loadShells();
     void distributeItems();

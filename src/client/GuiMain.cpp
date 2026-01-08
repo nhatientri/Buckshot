@@ -195,8 +195,13 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
          // Interpolate time
         auto now = std::chrono::steady_clock::now();
         auto lastUpdate = client.getLastStateUpdateTime();
-        int elapsedSinceUpdate = std::chrono::duration_cast<std::chrono::seconds>(now - lastUpdate).count();
-        int currentVisualTime = s.turnTimeRemaining - elapsedSinceUpdate;
+        int currentVisualTime = 0;
+        if (s.isPaused) {
+             currentVisualTime = s.turnTimeRemaining;
+        } else {
+             int elapsedSinceUpdate = std::chrono::duration_cast<std::chrono::seconds>(now - lastUpdate).count();
+             currentVisualTime = s.turnTimeRemaining - elapsedSinceUpdate;
+        }
         if (currentVisualTime < 0) currentVisualTime = 0;
 
         if (currentVisualTime <= 10) {
@@ -211,6 +216,18 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
                 ImGui::SameLine();
                 if (PlaySoundButton("SHOOT SELF")) client.sendMove(Buckshot::SHOOT_SELF);
                 
+                // AI Pause Check (Opponent is "The Dealer")
+                // Simplified check: since s.p2Name is "The Dealer" often
+                if (std::string(s.p2Name) == "The Dealer" || std::string(s.p1Name) == "The Dealer") {
+                    ImGui::SameLine();
+                     if (s.isPaused) {
+                         if (PlaySoundButton("RESUME")) client.sendTogglePause();
+                         ImGui::TextColored(ImVec4(1, 1, 0, 1), " (GAME PAUSED)");
+                     } else {
+                         if (PlaySoundButton("PAUSE")) client.sendTogglePause();
+                     }
+                }
+
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(0.0f, 0.7f, 0.7f));
@@ -244,8 +261,8 @@ void ShowRulesWindow(bool* open) {
     ImGui::Separator();
     
     ImGui::TextColored(ImVec4(1, 0, 0, 1), "SHELLS");
-    ImGui::Text("- Red: Live Round (Deals 1 Damage)");
-    ImGui::Text("- Grey/Blue: Blank Round (Safe)");
+    ImGui::Text("Live Round: Deals 1 Damage");
+    ImGui::Text("Blank Round: Safe");
     ImGui::Separator();
     
     ImGui::TextColored(ImVec4(0, 1, 1, 1), "ITEMS");
