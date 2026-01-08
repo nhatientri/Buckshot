@@ -67,6 +67,22 @@ This will produce three executables in the `build` directory:
 - `client`: A CLI-based client (legacy/debug).
 - `client_gui`: The main graphical client.
 
+## Docker Support
+
+You can run the server in a Docker container (Linux environment).
+
+1. **Build the Image**:
+   ```bash
+   docker build -t buckshot-server .
+   ```
+
+2. **Run the Server**:
+   ```bash
+   docker run -p 8080:8080 -it buckshot-server
+   ```
+
+> **Note**: The GUI Client should be run natively on your host machine to connect to the Dockerized server (`127.0.0.1:8080`).
+
 ## Running the Game
 
 ### 1. Start the Server
@@ -108,4 +124,3 @@ Run one or more clients.
 Communication uses a custom binary protocol defined in `src/common/Protocol.h`. Packets consist of a `PacketHeader` (Command + Size) followed by a specific payload structure (e.g., `GameStatePacket`).
 
 ---
-*Created by Antigravity Agent*
