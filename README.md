@@ -9,7 +9,9 @@ This project implements a client-server architecture for 1v1 online matches. It 
 ## Features
 
 - **Multiplayer (1v1)**: Real-time turn-based gameplay over TCP.
+- **Matchmaking Queue**: "Find Match" button to automatically pair with other waiting players.
 - **AI Opponent**: "Practice vs AI" mode ("The Dealer") for offline-style play.
+- **Pause Game**: Ability to pause and resume games against the AI.
 - **Lobby System**:
     - User Authentication (Register/Login).
     - Real-time Online Player List.
@@ -17,26 +19,31 @@ This project implements a client-server architecture for 1v1 online matches. It 
     - Rematch functionality.
 - **Game Mechanics**:
     - Full implementation of Buckshot Roulette rules.
-    - Items: Beer, Cigarettes, Handcuffs, Magnifying Glass, Saw, Inverter, Medicine, Adrenaline (Note: Some valid items implemented).
+    - Items: Beer, Cigarettes, Handcuffs, Magnifying Glass, Knife, Inverter, Medicine.
     - HP tracking, Ammo loading (Live vs Blank).
     - **Item Usage Limit**: Max 2 items per turn for balance.
 - **Replay System**:
     - Server records all matches.
     - Client can browse and watch replays of past games.
 - **Elo Rating System**: Skill-based matchmaking and ranking.
-- **Anti-Cheat**: Server-authoritative logic.
+- **Cross-Platform**: Runs on macOS and Linux.
 
 ## Prerequisites
 
-- **C++ Compiler**: C++17 or later.
+- **C++ Compiler**: C++17 or later (Clang/GCC).
 - **CMake**: 3.10 or later.
-- **SDL2**: Graphics and input library.
-- **OpenGL**: 3.0+ / Core Profile (3.2+ on macOS).
-- **Dear ImGui**: Included or linked (Standard backend used).
+- **SDL2**: Core library, Image, and Mixer extensions.
+- **OpenGL**: 3.0+ / Core Profile.
 
-### macOS (Brew)
+### macOS (Homebrew)
 ```bash
-brew install sdl2 cmake
+brew install sdl2 sdl2_image sdl2_mixer cmake
+```
+
+### Linux (Ubuntu/Debian)
+```bash
+sudo apt-get update
+sudo apt-get install build-essential cmake libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev
 ```
 
 ## Build Instructions
@@ -55,7 +62,7 @@ brew install sdl2 cmake
    make
    ```
 
-This will produce three executables:
+This will produce three executables in the `build` directory:
 - `server`: The game server.
 - `client`: A CLI-based client (legacy/debug).
 - `client_gui`: The main graphical client.
@@ -74,38 +81,31 @@ Run one or more clients.
 ./build/client_gui
 ```
 
-### 3. Gameplay
-1. **Login/Register**: Enter a username and password.
+### 3. Gameplay Guide
+1. **Login/Register**: Enter a unique username and password.
 2. **Lobby**:
-   - See online users on the right.
-   - Click **"Challenge"** next to a user to invite them.
-   - Click **"Practice vs AI"** to play against the bot.
-   - Use **"Watch Replays"** to review past matches.
+   - **Find Match**: Join the queue to play against a random opponent.
+   - **Practice vs AI**: Play a solo game against "The Dealer".
+   - **Challenge**: Click "Challenge" next to a user in the Online list to invite them directly.
+   - **Watch Replays**: Review past matches.
 3. **In-Game**:
-   - Click items to use them (Max 2 per turn).
-   - Click "Shoot Self" or "Shoot Opponent" to end your move (if using a gun).
+   - **Items**: Click items to use them (Max 2 per turn). hover to see descriptions.
+   - **Shoot**: Click "SHOOT SELF" (risk for extra turn) or "SHOOT OPPONENT".
+   - **Controls**:
+     - **Pause**: (AI Only) Click "PAUSE" to freeze the game.
+     - **Surrender**: Forfeit the match.
 
 ## Project Structure
 
 - `src/common`: Shared definitions (`Protocol.h`).
 - `src/server`: Server-side logic (`Server.cpp`, `GameSession.cpp`, `UserManager.cpp`, `ReplayManager.cpp`).
-- `src/client`: Client-side logic (`GuiMain.cpp`, `NetworkClient.cpp`, `Client.cpp`).
-- `include`: Header files (if separated).
+- `src/client`: Client-side logic (`GuiMain.cpp`, `NetworkClient.cpp`).
+- `assets`: Game textures and sounds.
 - `replays`: Directory where server stores `.replay` files.
-- `users.txt`: Flat-file database for user credentials and stats.
 
 ## Protocol
 
-Communication uses a custom binary protocol with a `PacketHeader` (Command + Size) followed by a payload structure (e.g., `LoginRequest`, `GameStatePacket`). See `src/common/Protocol.h` for details.
-
-## Context for Handoff
-
-- **Compilation**: The project compiles successfully on macOS.
-- **Known Issues**: None currently. Item limit logic and AI integration were recently fixed.
-- **Recent Changes**:
-    - Added "Practice vs AI" button to Lobby.
-    - Fixed compilation errors in `Server.cpp` due to missing `CMD_PLAY_AI` handler.
-    - Implemented 2-item usage limit per turn.
+Communication uses a custom binary protocol defined in `src/common/Protocol.h`. Packets consist of a `PacketHeader` (Command + Size) followed by a specific payload structure (e.g., `GameStatePacket`).
 
 ---
 *Created by Antigravity Agent*
