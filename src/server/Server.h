@@ -35,6 +35,8 @@ private:
     std::shared_ptr<GameSession> getGameSession(int fd);
     
     std::map<std::string, std::string> pendingChallenges; // Challenger -> Target
+    std::vector<std::string> matchmakingQueue; // Users waiting for match
+    void processMatchmaking();
 };
 
 }

@@ -350,6 +350,7 @@ int main(int argc, char** argv) {
     char passwordBuf[32] = "";
     bool showLeaderboard = false;
     bool showRules = false;
+    bool searchingMatch = false;
     
     // Replay State
     bool showReplayBrowser = false;
@@ -558,6 +559,23 @@ int main(int argc, char** argv) {
                         client.sendPlayAiRequest();
                     }
                     ImGui::SameLine();
+                    
+                    if (!searchingMatch) {
+                        if (PlaySoundButton("Find Match")) {
+                            client.sendJoinQueue();
+                            searchingMatch = true;
+                        }
+                    } else {
+                        // Flashing or distinct color
+                        ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.1f, 0.6f, 0.6f));
+                        if (PlaySoundButton("Searching... (Cancel)")) {
+                            client.sendLeaveQueue();
+                            searchingMatch = false;
+                        }
+                        ImGui::PopStyleColor();
+                    }
+
+                    ImGui::SameLine();
                     if (PlaySoundButton("Watch Replays")) {
                         client.requestReplayList();
                         showReplayBrowser = true;
@@ -601,6 +619,7 @@ int main(int argc, char** argv) {
             }
             
             if (gs.inGame && !showReplayViewer) {
+                 searchingMatch = false; // Stop searching if game started
                  ShowGameScreen(gs.state, client, false);
             }
         }

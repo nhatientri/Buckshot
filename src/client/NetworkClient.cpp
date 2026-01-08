@@ -306,6 +306,17 @@ std::string NetworkClient::getRematchTarget() {
 void NetworkClient::sendPlayAiRequest() {
     PacketHeader header = {0, CMD_PLAY_AI};
     send(socketFd, &header, sizeof(header), 0);
+    send(socketFd, &header, sizeof(header), 0);
+}
+
+void NetworkClient::sendJoinQueue() {
+    PacketHeader header = {0, CMD_QUEUE_JOIN};
+    send(socketFd, &header, sizeof(header), 0);
+}
+
+void NetworkClient::sendLeaveQueue() {
+    PacketHeader header = {0, CMD_QUEUE_LEAVE};
+    send(socketFd, &header, sizeof(header), 0);
 }
 
 }

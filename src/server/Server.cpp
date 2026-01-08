@@ -128,6 +128,9 @@ void Server::run() {
         }
 
         handleClientActivity(readfds);
+        
+        // Matchmaking
+        processMatchmaking();
     }
 }
 
@@ -230,6 +233,12 @@ void Server::handleClientActivity(fd_set& readfds) {
                     for (auto it = pendingChallenges.begin(); it != pendingChallenges.end(); ) {
                         if (it->second == u) it = pendingChallenges.erase(it);
                         else ++it;
+                    }
+                    
+                    // Remove from Matchmaking Queue
+                    auto qIt = std::find(matchmakingQueue.begin(), matchmakingQueue.end(), u);
+                    if (qIt != matchmakingQueue.end()) {
+                         matchmakingQueue.erase(qIt);
                     }
                 }
 
@@ -538,6 +547,30 @@ void Server::handleClientActivity(fd_set& readfds) {
                                 }
                             }
                         }
+    } else if (header.command == CMD_QUEUE_JOIN) {
+                        std::string user = authenticatedUsers[sd];
+                        // Check if already in queue
+                        if (std::find(matchmakingQueue.begin(), matchmakingQueue.end(), user) == matchmakingQueue.end()) {
+                            matchmakingQueue.push_back(user);
+                            std::cout << user << " joined matchmaking queue." << std::endl;
+                        }
+                        // Send OK
+                        PacketHeader resp;
+                        resp.command = CMD_OK; 
+                        resp.size = 0;
+                        send(sd, &resp, sizeof(resp), 0);
+                        
+                    } else if (header.command == CMD_QUEUE_LEAVE) {
+                         std::string user = authenticatedUsers[sd];
+                         auto it = std::find(matchmakingQueue.begin(), matchmakingQueue.end(), user);
+                         if (it != matchmakingQueue.end()) {
+                             matchmakingQueue.erase(it);
+                             std::cout << user << " left matchmaking queue." << std::endl;
+                         }
+                         PacketHeader resp;
+                         resp.command = CMD_OK;
+                         resp.size = 0;
+                         send(sd, &resp, sizeof(resp), 0);
                     }
                 }
             } else {
@@ -545,6 +578,54 @@ void Server::handleClientActivity(fd_set& readfds) {
             }
         }
         ++it;
+    }
+}
+
+void Server::processMatchmaking() {
+    // Simple FIFO matching for now
+    // Challenge: Check ELO difference?
+    // For now, just match the first 2 people.
+    
+    while (matchmakingQueue.size() >= 2) {
+        std::string user1 = matchmakingQueue[0];
+        std::string user2 = matchmakingQueue[1];
+        
+        // Remove from queue
+        matchmakingQueue.erase(matchmakingQueue.begin());
+        matchmakingQueue.erase(matchmakingQueue.begin());
+        
+        // Find FDs
+        int fd1 = -1, fd2 = -1;
+        for (const auto& pair : authenticatedUsers) {
+            if (pair.second == user1) fd1 = pair.first;
+            if (pair.second == user2) fd2 = pair.first;
+        }
+        
+        // Verify connectivity
+        if (fd1 == -1 || fd2 == -1) {
+            // One user lost connection?
+            if (fd1 != -1) matchmakingQueue.push_back(user1); // Put back
+            if (fd2 != -1) matchmakingQueue.push_back(user2); // Put back
+            continue;
+        }
+        
+        std::cout << "Matchmaking: Paired " << user1 << " vs " << user2 << std::endl;
+        
+        // Start Game
+        auto newGame = std::make_shared<GameSession>(user1, user2, fd1, fd2);
+        activeGames.push_back(newGame);
+        
+        // Broadcast Initial State
+        GameStatePacket state = newGame->getState();
+        PacketHeader stateHead;
+        stateHead.command = CMD_GAME_STATE;
+        stateHead.size = sizeof(GameStatePacket);
+        
+        send(fd1, &stateHead, sizeof(stateHead), 0);
+        send(fd1, &state, sizeof(state), 0);
+        
+        send(fd2, &stateHead, sizeof(stateHead), 0);
+        send(fd2, &state, sizeof(state), 0);
     }
 }
 

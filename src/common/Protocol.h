@@ -43,7 +43,12 @@ enum Command : uint8_t {
     CMD_PLAY_AI = 45,
 
     // Resign
+    // Resign
     CMD_RESIGN         = 50,
+
+    // Matchmaking
+    CMD_QUEUE_JOIN     = 60,
+    CMD_QUEUE_LEAVE    = 61,
 
     CMD_ERROR = 99
 };
