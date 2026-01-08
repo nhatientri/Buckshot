@@ -11,7 +11,11 @@ file(GLOB COMMON_SOURCES "src/common/*.cpp")
 
 # Find SDL2
 find_package(SDL2 REQUIRED)
-include_directories(${SDL2_INCLUDE_DIRS})
+# Find SDL2_mixer using PkgConfig (more robust on Mac/Homebrew)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
+include_directories(${SDL2_MIXER_INCLUDE_DIRS})
+link_directories(${SDL2_MIXER_LIBRARY_DIRS})
 
 # ImGui Sources
 set(IMGUI_DIR "libs/imgui")
@@ -42,4 +46,4 @@ add_executable(client_gui
     ${COMMON_SOURCES}
     ${IMGUI_SOURCES}
 )
-target_link_libraries(client_gui PRIVATE ${SDL2_LIBRARIES} "-framework OpenGL" "-framework CoreFoundation")
+target_link_libraries(client_gui PRIVATE ${SDL2_LIBRARIES} ${SDL2_MIXER_LIBRARIES} "-framework OpenGL" "-framework CoreFoundation")

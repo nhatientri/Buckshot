@@ -3,12 +3,35 @@
 #include "backends/imgui_impl_opengl3.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
+#include <SDL_mixer.h>
 #include <iostream>
 #include "NetworkClient.h"
 
+// Audio Globals
+Mix_Chunk* clickSound = nullptr;
+Mix_Chunk* hoverSound = nullptr;
+ImGuiID lastHoveredId = 0;
+
+// Audio Helper Wrapper
+bool PlaySoundButton(const char* label, const ImVec2& size = ImVec2(0,0)) {
+    bool pressed = ImGui::Button(label, size);
+    
+    if (ImGui::IsItemHovered()) {
+        ImGuiID id = ImGui::GetID(label);
+        if (id != lastHoveredId) {
+            if (hoverSound) Mix_PlayChannel(-1, hoverSound, 0);
+            lastHoveredId = id;
+        }
+    }
+    
+    if (pressed) {
+        if (clickSound) Mix_PlayChannel(-1, clickSound, 0);
+    }
+    return pressed;
+}
+
 // Helper to display generic modal
 void ShowStatusModal(const std::string& msg) {
-    // ImGui::OpenPopup("Status"); // Correctly removed. Handled by caller.
     if (ImGui::BeginPopupModal("Status", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Dummy(ImVec2(300.0f, 0.0f)); 
         float winWidth = ImGui::GetWindowSize().x;
@@ -18,7 +41,7 @@ void ShowStatusModal(const std::string& msg) {
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         float buttonWidth = 100.0f;
         ImGui::SetCursorPosX((winWidth - buttonWidth) * 0.5f);
-        if (ImGui::Button("OK", ImVec2(buttonWidth, 0))) { ImGui::CloseCurrentPopup(); }
+        if (PlaySoundButton("OK", ImVec2(buttonWidth, 0))) { ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
 }
@@ -80,9 +103,9 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
              ImGui::PushID(i); 
              std::string label = GetItemName(myInv[i]);
              if (readOnly) {
-                 ImGui::Button(label.c_str()); // Click does nothing
+                 PlaySoundButton(label.c_str()); // Click does nothing but plays sound
              } else {
-                 if (ImGui::Button(label.c_str())) {
+                 if (PlaySoundButton(label.c_str())) {
                      client.sendMove(Buckshot::USE_ITEM, (Buckshot::ItemType)myInv[i]);
                  }
              }
@@ -111,11 +134,11 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
         else ImGui::Text("Elo: No Change");
         
         if (!readOnly) {
-            if (ImGui::Button("Back to Lobby")) {
+            if (PlaySoundButton("Back to Lobby")) {
                 client.resetGame();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Rematch")) {
+            if (PlaySoundButton("Rematch")) {
                 std::string myName = client.getUsername();
                 std::string opponentName = (myName == std::string(s.p1Name)) ? s.p2Name : s.p1Name;
                 client.resetGame();
@@ -141,15 +164,15 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
 
         if (!readOnly) {
             if (client.getUsername() == std::string(s.currentTurnUser)) {
-                if (ImGui::Button("SHOOT OPPONENT")) client.sendMove(Buckshot::SHOOT_OPPONENT);
+                if (PlaySoundButton("SHOOT OPPONENT")) client.sendMove(Buckshot::SHOOT_OPPONENT);
                 ImGui::SameLine();
-                if (ImGui::Button("SHOOT SELF")) client.sendMove(Buckshot::SHOOT_SELF);
+                if (PlaySoundButton("SHOOT SELF")) client.sendMove(Buckshot::SHOOT_SELF);
                 
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(0.0f, 0.7f, 0.7f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, (ImVec4)ImColor::HSV(0.0f, 0.8f, 0.8f));
-                if (ImGui::Button("SURRENDER")) {
+                if (PlaySoundButton("SURRENDER")) {
                     client.sendResign();
                 }
                 ImGui::PopStyleColor(3);
@@ -168,11 +191,19 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
 }
 
 int main(int argc, char** argv) {
-    // ... SDL Setup omitted ...
     // Setup SDL
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO) != 0) {
         std::cerr << "Error: " << SDL_GetError() << std::endl;
         return -1;
+    }
+    
+    // Audio Init
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+        std::cerr << "SDL_mixer could not initialize! Error: " << Mix_GetError() << std::endl;
+    } else {
+        clickSound = Mix_LoadWAV("assets/click.wav");
+        hoverSound = Mix_LoadWAV("assets/hover.wav");
+        if (!clickSound || !hoverSound) std::cerr << "Failed to load WAVs! " << Mix_GetError() << std::endl;
     }
 
     // GL 3.0 + GLSL 130
@@ -238,6 +269,10 @@ int main(int argc, char** argv) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
+        
+        // Reset hover tracking if nothing is hovered, but ImGui handles ID stacks.
+        // We track lastHoveredId to detect NEW hover events.
+        if (!ImGui::IsAnyItemHovered()) lastHoveredId = 0;
 
         // Check Network Status
         std::string newMsg = client.getLastMessage();
@@ -259,7 +294,7 @@ int main(int argc, char** argv) {
             ImGui::Text("Player %s wants a rematch!", rematchTarget.c_str());
             ImGui::Separator();
     
-            if (ImGui::Button("ACCEPT", ImVec2(120, 0))) {
+            if (PlaySoundButton("ACCEPT", ImVec2(120, 0))) {
                 client.sendChallenge(rematchTarget); 
                 
                 // Remove challenge locally so popup doesn't reopen
@@ -275,7 +310,7 @@ int main(int argc, char** argv) {
             }
             ImGui::SetItemDefaultFocus();
             ImGui::SameLine();
-            if (ImGui::Button("DECLINE", ImVec2(120, 0))) {
+            if (PlaySoundButton("DECLINE", ImVec2(120, 0))) {
                 // Remove challenge locally
                 auto challenges = client.getPendingChallenges();
                 for (size_t i=0; i<challenges.size(); ++i) {
@@ -297,12 +332,12 @@ int main(int argc, char** argv) {
             ImGui::InputText("Username", usernameBuf, 32);
             ImGui::InputText("Password", passwordBuf, 32, ImGuiInputTextFlags_Password);
             
-            if (ImGui::Button("Login")) {
+            if (PlaySoundButton("Login")) {
                 std::cout << "GUI: Login Button Pressed" << std::endl;
                 client.loginUser(usernameBuf, passwordBuf);
             }
             ImGui::SameLine();
-            if (ImGui::Button("Register")) {
+            if (PlaySoundButton("Register")) {
                 std::cout << "GUI: Register Button Pressed" << std::endl;
                 client.registerUser(usernameBuf, passwordBuf);
             }
@@ -346,19 +381,19 @@ int main(int argc, char** argv) {
                 ImGui::Begin("Leaderboard", &showLeaderboard);
                 std::string board = client.getLeaderboardData();
                 ImGui::TextUnformatted(board.c_str());
-                if (ImGui::Button("Refresh")) client.getLeaderboard();
+                if (PlaySoundButton("Refresh")) client.getLeaderboard();
                 ImGui::End();
             }
             
             // REPLAY BROWSER
             if (showReplayBrowser) {
                 ImGui::Begin("Replay Browser", &showReplayBrowser);
-                if (ImGui::Button("Refresh")) client.requestReplayList();
+                if (PlaySoundButton("Refresh")) client.requestReplayList();
                 ImGui::Separator();
                 
                 auto list = client.getReplayList();
                 for (const auto& f : list) {
-                    if (ImGui::Button(("Watch " + f).c_str())) {
+                    if (PlaySoundButton(("Watch " + f).c_str())) {
                         client.requestReplayDownload(f);
                     }
                 }
@@ -376,20 +411,20 @@ int main(int argc, char** argv) {
                  auto data = client.getReplayData();
                  if (data.empty()) {
                      ImGui::Text("Error: No Replay Data");
-                     if (ImGui::Button("Close")) showReplayViewer = false;
+                     if (PlaySoundButton("Close")) showReplayViewer = false;
                  } else {
                      // Playback Controls
                      ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - 60));
                      ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, 60));
                      ImGui::Begin("Playback Controls", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
                      
-                     if (ImGui::Button("<< Prev") && replayIndex > 0) replayIndex--;
+                     if (PlaySoundButton("<< Prev") && replayIndex > 0) replayIndex--;
                      ImGui::SameLine();
                      ImGui::Text("Move %d / %lu", replayIndex + 1, data.size());
                      ImGui::SameLine();
-                     if (ImGui::Button("Next >>") && replayIndex < (int)data.size() - 1) replayIndex++;
+                     if (PlaySoundButton("Next >>") && replayIndex < (int)data.size() - 1) replayIndex++;
                      ImGui::SameLine();
-                     if (ImGui::Button("Exit Replay")) showReplayViewer = false;
+                     if (PlaySoundButton("Exit Replay")) showReplayViewer = false;
                      
                      ImGui::End();
                      
@@ -406,11 +441,11 @@ int main(int argc, char** argv) {
                     ImGui::SetNextWindowPos(ImVec2(0, 19)); // Below menu bar
                     ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - 19));
                     ImGui::Begin("Lobby", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-                    if (ImGui::Button("Practice vs AI")) {
+                    if (PlaySoundButton("Practice vs AI")) {
                         client.sendPlayAiRequest();
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Watch Replays")) {
+                    if (PlaySoundButton("Watch Replays")) {
                         client.requestReplayList();
                         showReplayBrowser = true;
                     }
@@ -421,7 +456,7 @@ int main(int argc, char** argv) {
                     for (const auto& u : users) {
                         if (u == client.getUsername()) continue; // Don't challenge self
                         ImGui::PushID(u.c_str());
-                        if (ImGui::Button("Challenge")) {
+                        if (PlaySoundButton("Challenge")) {
                             client.sendChallenge(u);
                         }
                         ImGui::SameLine();
@@ -437,12 +472,12 @@ int main(int argc, char** argv) {
                         ImGui::PushID(i);
                         ImGui::Text("From: %s", c.c_str());
                         ImGui::SameLine();
-                        if (ImGui::Button("Accept")) {
+                        if (PlaySoundButton("Accept")) {
                             client.acceptChallenge(c);
                             client.removeChallenge(i); 
                         }
                         ImGui::SameLine();
-                        if (ImGui::Button("Decline")) {
+                        if (PlaySoundButton("Decline")) {
                             client.removeChallenge(i); 
                         }
                         ImGui::PopID();
@@ -466,6 +501,10 @@ int main(int argc, char** argv) {
     }
 
     // Cleanup
+    if (clickSound) Mix_FreeChunk(clickSound);
+    if (hoverSound) Mix_FreeChunk(hoverSound);
+    Mix_CloseAudio();
+    
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
