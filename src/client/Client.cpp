@@ -42,9 +42,9 @@ void Client::run() {
             PacketHeader header;
             int valread = read(socketFd, &header, sizeof(PacketHeader));
             if (valread == sizeof(PacketHeader)) {
-                if (header.command == CMD_LOGIN_SUCCESS) {
+                if (header.command == CMD_OK) {
                     std::cout << "[Server] Login/Register Successful!" << std::endl;
-                } else if (header.command == CMD_LOGIN_FAIL) {
+                } else if (header.command == CMD_FAIL) {
                     std::cout << "[Server] Login/Register Failed!" << std::endl;
                 } else if (header.command == CMD_LIST_USERS_RESP) {
                     if (header.size > 0) {

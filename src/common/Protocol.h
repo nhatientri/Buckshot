@@ -13,11 +13,12 @@ struct PacketHeader {
 
 // Command Codes
 enum Command : uint8_t {
+    CMD_OK = 0, // Used for success responses
     CMD_REGISTER = 1,
     CMD_LOGIN = 2,
-    CMD_LOGIN_SUCCESS = 3,
-    CMD_LOGIN_FAIL = 4,
-
+    CMD_FAIL = 255, // Explicit fail code
+    // Duplicates removed
+    
     CMD_LIST_USERS = 5,
     CMD_LIST_USERS_RESP = 6,
 
@@ -32,6 +33,26 @@ enum Command : uint8_t {
     CMD_GAME_STATE = 22, // Update board
     CMD_GAME_RESULT = 23, // Win/Loss/Draw
     
+    // Replay
+    CMD_LIST_REPLAYS   = 40,
+    CMD_LIST_REPLAYS_RESP = 41,
+    CMD_GET_REPLAY     = 42,
+    CMD_REPLAY_DATA    = 43,
+
+    // AI
+    CMD_PLAY_AI = 45,
+
+    // Resign
+    // Resign
+    CMD_RESIGN         = 50,
+
+    // Matchmaking
+    CMD_QUEUE_JOIN     = 60,
+    CMD_QUEUE_LEAVE    = 61,
+
+    // Pause
+    CMD_TOGGLE_PAUSE   = 70,
+
     CMD_ERROR = 99
 };
 
@@ -42,8 +63,6 @@ struct LoginRequest {
     char username[32];
     char password[32];
 };
-
-
 
 struct ChallengePacket {
     char targetUser[32]; // Who you challenge, or who challenged you
@@ -75,6 +94,8 @@ struct GameStatePacket {
     int p1Hp;
     int p2Hp;
     int shellsRemaining;
+    int liveCount; // Start of round count
+    int blankCount; // Start of round count
     
     uint8_t p1Inventory[8];
     uint8_t p2Inventory[8];
@@ -83,9 +104,15 @@ struct GameStatePacket {
     bool knifeActive;
     
     char currentTurnUser[32]; // Username of whose turn it is
-    char message[64]; // "Player1 shot Self! It was a Blank."
+    char p1Name[32];
+    char p2Name[32];
+    char message[128]; // "Player1 shot Self! It was a Blank."
     bool gameOver;
     char winner[32];
+    int32_t turnTimeRemaining; // Seconds remaining for current turn
+    int32_t p1EloChange; // Delta for P1
+    int32_t p2EloChange; // Delta for P2
+    bool isPaused;
 };
 
 // Response codes

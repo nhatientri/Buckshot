@@ -5,6 +5,7 @@
 #include <memory>
 #include "UserManager.h"
 #include "GameSession.h"
+#include <chrono>
 
 namespace Buckshot {
 
@@ -23,13 +24,19 @@ private:
     // session state
     std::map<int, std::string> authenticatedUsers; // fd -> username
     std::vector<std::shared_ptr<GameSession>> activeGames;
+    std::chrono::steady_clock::time_point lastTimeoutCheck;
 
     void setupSocket();
     void handleNewConnection();
     void handleClientActivity(fd_set& readfds);
+    void broadcastUserList();
     void processPacket(int clientFd, const char* buffer, int size);
     
     std::shared_ptr<GameSession> getGameSession(int fd);
+    
+    std::map<std::string, std::string> pendingChallenges; // Challenger -> Target
+    std::vector<std::string> matchmakingQueue; // Users waiting for match
+    void processMatchmaking();
 };
 
 }
