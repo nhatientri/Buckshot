@@ -4,6 +4,7 @@
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <SDL_mixer.h>
+#include <SDL_image.h>
 #include <iostream>
 #include "NetworkClient.h"
 
@@ -11,6 +12,9 @@
 Mix_Chunk* clickSound = nullptr;
 Mix_Chunk* hoverSound = nullptr;
 ImGuiID lastHoveredId = 0;
+
+// Texture Globals
+GLuint opponentTexture = 0;
 
 // Audio Helper Wrapper
 bool PlaySoundButton(const char* label, const ImVec2& size = ImVec2(0,0)) {
@@ -28,6 +32,39 @@ bool PlaySoundButton(const char* label, const ImVec2& size = ImVec2(0,0)) {
         if (clickSound) Mix_PlayChannel(-1, clickSound, 0);
     }
     return pressed;
+}
+
+// Helper function to load texture from file
+// Returns 0 on failure, otherwise GL texture ID
+GLuint LoadTextureFromFile(const char* filename) {
+    SDL_Surface* surface = IMG_Load(filename);
+    if (!surface) {
+        std::cerr << "Failed to load texture " << filename << ": " << IMG_GetError() << std::endl;
+        return 0;
+    }
+
+    // Convert to RGBA32 to ensure compatibility
+    SDL_Surface* converted = SDL_ConvertSurfaceFormat(surface, SDL_PIXELFORMAT_RGBA32, 0);
+    SDL_FreeSurface(surface); // Free the original
+    if (!converted) {
+        std::cerr << "Failed to convert surface: " << SDL_GetError() << std::endl;
+        return 0;
+    }
+    surface = converted; // Use the converted one
+
+    GLuint texture_id;
+    glGenTextures(1, &texture_id);
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+
+    // Setup filtering parameters for display
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Upload pixels to texture (Always RGBA now)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, surface->w, surface->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, surface->pixels);
+    
+    SDL_FreeSurface(surface);
+    return texture_id;
 }
 
 // Helper to display generic modal
@@ -77,6 +114,11 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
     const uint8_t* oppInv = amIP1 ? s.p2Inventory : s.p1Inventory;
     
     // TOP: Opponent
+    if (opponentTexture != 0) {
+        ImGui::Image((void*)(intptr_t)opponentTexture, ImVec2(100, 100)); // Display 100x100
+        ImGui::SameLine();
+    }
+    ImGui::BeginGroup();
     ImGui::Text("OPPONENT (%s): HP [%d] | Items:", amIP1 ? s.p2Name : s.p1Name, oppHp);
     for(int i=0;i<8;++i) {
          if (oppInv[i]) {
@@ -85,6 +127,7 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
          }
     }
     if (oppHandcuffed) ImGui::TextColored(ImVec4(1,0,0,1), "HANDCUFFED");
+    ImGui::EndGroup();
     
     ImGui::Separator();
     
@@ -190,6 +233,36 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
     ImGui::End();
 }
 
+void ShowRulesWindow(bool* open) {
+    if (!ImGui::Begin("Game Rules", open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+    
+    ImGui::TextColored(ImVec4(1, 1, 0, 1), "GOAL");
+    ImGui::Text("Survive the roulette and deplete the opponent's HP.");
+    ImGui::Separator();
+    
+    ImGui::TextColored(ImVec4(1, 0, 0, 1), "SHELLS");
+    ImGui::Text("- Red: Live Round (Deals 1 Damage)");
+    ImGui::Text("- Grey/Blue: Blank Round (Safe)");
+    ImGui::Separator();
+    
+    ImGui::TextColored(ImVec4(0, 1, 1, 1), "ITEMS");
+    ImGui::BulletText("Beer: Ejects the current shell without firing.");
+    ImGui::BulletText("Cigarettes: Heals 1 HP.");
+    ImGui::BulletText("Handcuffs: Skips the opponent's next turn.");
+    ImGui::BulletText("Magnifying Glass: Reveals the current shell.");
+    ImGui::BulletText("Knife: Next shot deals double damage (2).");
+    ImGui::BulletText("Inverter: Flips current shell (Live <-> Blank).");
+    ImGui::BulletText("Expired Medicine: 50%% chance to Heal 2 HP, 50%% chance to lose 1 HP.");
+    
+    ImGui::Separator();
+    if (PlaySoundButton("Close")) *open = false;
+    
+    ImGui::End();
+}
+
 int main(int argc, char** argv) {
     // Setup SDL
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO) != 0) {
@@ -197,6 +270,12 @@ int main(int argc, char** argv) {
         return -1;
     }
     
+    // Initialize SDL_image
+    int imgFlags = IMG_INIT_PNG;
+    if (!(IMG_Init(imgFlags) & imgFlags)) {
+        std::cerr << "SDL_image could not initialize! IMG_Error: " << IMG_GetError() << std::endl;
+    }
+
     // Audio Init
     Mix_Music* bgMusic = nullptr;
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
@@ -207,7 +286,14 @@ int main(int argc, char** argv) {
         if (!clickSound || !hoverSound) std::cerr << "Failed to load WAVs! " << Mix_GetError() << std::endl;
         
         // Background Music
-        bgMusic = Mix_LoadMUS("assets/HIA.mp3");
+        bgMusic = Mix_LoadMUS("assets/BuckshotBGM.mp3");
+        if (bgMusic) {
+            Mix_PlayMusic(bgMusic, -1); // Loop infinitely
+            std::cout << "Playing background music..." << std::endl;
+        } else {
+             std::cerr << "Failed to load Music! " << Mix_GetError() << std::endl;
+        }
+        
         if (bgMusic) {
             Mix_PlayMusic(bgMusic, -1); // Loop infinitely
             std::cout << "Playing background music..." << std::endl;
@@ -217,8 +303,11 @@ int main(int argc, char** argv) {
     }
 
     // GL 3.0 + GLSL 130
+    // GL 3.0 + GLSL 150
     const char* glsl_version = "#version 150";
+#ifdef __APPLE__
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG); // Always required on Mac
+#endif
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
@@ -243,6 +332,11 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init(glsl_version);
 
+    // Load Textures (Must be done after GL context is created)
+    std::cout << "Loading textures..." << std::endl;
+    opponentTexture = LoadTextureFromFile("assets/dealer.png");
+    if (opponentTexture != 0) std::cout << "Opponent texture loaded successfully: " << opponentTexture << std::endl;
+
     // Network Client
     Buckshot::NetworkClient client;
     if (!client.connectToServer("127.0.0.1", 8080)) {
@@ -255,6 +349,7 @@ int main(int argc, char** argv) {
     char usernameBuf[32] = "";
     char passwordBuf[32] = "";
     bool showLeaderboard = false;
+    bool showRules = false;
     
     // Replay State
     bool showReplayBrowser = false;
@@ -381,10 +476,18 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndMenu();
                 }
+                if (ImGui::BeginMenu("Help")) {
+                    if (ImGui::MenuItem("Rules")) {
+                        showRules = true;
+                    }
+                    ImGui::EndMenu();
+                }
                 ImGui::SameLine(ImGui::GetWindowWidth() - 200);
                 ImGui::Text("Logged in as: %s", client.getUsername().c_str());
                 ImGui::EndMainMenuBar();
             }
+
+            if (showRules) ShowRulesWindow(&showRules);
 
             // LEADERBOARD
             if (showLeaderboard) {
@@ -516,6 +619,10 @@ int main(int argc, char** argv) {
     if (bgMusic) Mix_FreeMusic(bgMusic);
     Mix_CloseAudio();
     
+    if (opponentTexture != 0) glDeleteTextures(1, &opponentTexture);
+    
+    IMG_Quit();
+
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

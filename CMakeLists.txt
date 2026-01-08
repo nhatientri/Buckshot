@@ -17,6 +17,11 @@ pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
 include_directories(${SDL2_MIXER_INCLUDE_DIRS})
 link_directories(${SDL2_MIXER_LIBRARY_DIRS})
 
+# Find SDL2_image using PkgConfig
+pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
+include_directories(${SDL2_IMAGE_INCLUDE_DIRS})
+link_directories(${SDL2_IMAGE_LIBRARY_DIRS})
+
 # ImGui Sources
 set(IMGUI_DIR "libs/imgui")
 set(IMGUI_SOURCES
@@ -46,4 +51,12 @@ add_executable(client_gui
     ${COMMON_SOURCES}
     ${IMGUI_SOURCES}
 )
-target_link_libraries(client_gui PRIVATE ${SDL2_LIBRARIES} ${SDL2_MIXER_LIBRARIES} "-framework OpenGL" "-framework CoreFoundation")
+target_link_libraries(client_gui PRIVATE ${SDL2_LIBRARIES} ${SDL2_MIXER_LIBRARIES} ${SDL2_IMAGE_LIBRARIES})
+
+# Platform Specific Linking
+if (APPLE)
+    target_link_libraries(client_gui PRIVATE "-framework OpenGL" "-framework CoreFoundation")
+else()
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(client_gui PRIVATE ${OPENGL_LIBRARIES})
+endif()
