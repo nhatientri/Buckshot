@@ -62,6 +62,10 @@ private:
     void loadShells();
     void distributeItems();
     void useItem(const std::string& player, ItemType item);
+    
+    // AI Memory
+    enum AiShellState { AI_UNKNOWN, AI_KNOWN_LIVE, AI_KNOWN_BLANK };
+    AiShellState aiKnownShellState = AI_UNKNOWN;
 };
 
 }

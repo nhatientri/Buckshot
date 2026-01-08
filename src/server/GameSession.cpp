@@ -45,6 +45,7 @@ void GameSession::loadShells() {
     lastMessage += " Loaded " + std::to_string(count) + " shells (" + std::to_string(totalLive) + " Live, " + std::to_string(totalBlank) + " Blank)";
     
     distributeItems();
+    aiKnownShellState = AI_UNKNOWN; // Reset memory on reload
 }
 
 void GameSession::distributeItems() {
@@ -97,12 +98,12 @@ void GameSession::useItem(const std::string& player, ItemType item) {
         lastMessage += "MAGNIFYING GLASS. ";
         if (!shells.empty()) {
             bool next = shells.front();
-            // Inverter now modifies shells directly, so no need to check flag here
-            // Actually Inverter flips it physically when fired? Or flips the nature?
-            // "Inverter (Flips the next shell)" -> implying physical change or logical swap?
-            // Let's assume logical swap for the next shot. Glass should probably show the *current* state.
-            // If inverter already active, show the inverted state? Let's say yes for consistency.
             lastMessage += "Next shell is " + std::string(next ? "LIVE" : "BLANK") + ".";
+            
+            // AI MEMORY UPDATE
+            if (player == p2Name) {
+                aiKnownShellState = next ? AI_KNOWN_LIVE : AI_KNOWN_BLANK;
+            }
         }
     } else if (item == ITEM_KNIFE) {
         lastMessage += "KNIFE. Next shot double damage.";
@@ -111,6 +112,10 @@ void GameSession::useItem(const std::string& player, ItemType item) {
         lastMessage += "INVERTER. Polarity flipped.";
         if (!shells.empty()) {
             shells.front() = !shells.front();
+            // If AI knew the state, flip memory too
+            if (aiKnownShellState != AI_UNKNOWN) {
+                aiKnownShellState = (aiKnownShellState == AI_KNOWN_LIVE) ? AI_KNOWN_BLANK : AI_KNOWN_LIVE;
+            }
         }
     } else if (item == ITEM_EXPIRED_MEDICINE) {
         lastMessage += "MEDICINE. ";
@@ -159,6 +164,9 @@ void GameSession::processMove(const std::string& player, MoveType move, ItemType
 
     bool isLive = shells.front();
     shells.pop_front();
+    
+    // Reset AI Memory since shell is gone
+    aiKnownShellState = AI_UNKNOWN;
     
     // Inverter logic removed: data is modified directly in useItem
     // if (inverterActive) { ... }
@@ -322,44 +330,87 @@ bool GameSession::executeAiTurn() {
     if (elapsed < 2000) return false; // Wait 2 seconds before acting
     
     // DECISION LOGIC
-    // 1. Heal
-    if (hp2 < 3 && std::count(p2Items.begin(), p2Items.end(), ITEM_CIGARETTES) > 0 && itemsUsedThisTurn < 2) {
+    
+    // 0. Update Probabilities
+    int liveCount = 0;
+    int blankCount = 0;
+    for (bool s : shells) {
+        if (s) liveCount++; else blankCount++;
+    }
+    int total = liveCount + blankCount;
+    if (total == 0) return false; // Should not happen due to reload logic
+    
+    double pLive = (double)liveCount / total;
+    
+    // MEMORY OVERRIDE
+    if (aiKnownShellState == AI_KNOWN_LIVE) {
+        pLive = 1.0;
+        liveCount = 1; blankCount = 0; // Virtual certainty
+    } else if (aiKnownShellState == AI_KNOWN_BLANK) {
+        pLive = 0.0;
+        liveCount = 0; blankCount = 1; // Virtual certainty
+    }
+
+    // 1. Heal (High Priority if low HP)
+    if (hp2 <= 2 && std::count(p2Items.begin(), p2Items.end(), ITEM_CIGARETTES) > 0 && itemsUsedThisTurn < 2) {
         processMove(p2Name, USE_ITEM, ITEM_CIGARETTES);
         return true;
     }
     
-    // 2. Handcuff
+    // 2. Scan (If unknown)
+    if (aiKnownShellState == AI_UNKNOWN && std::count(p2Items.begin(), p2Items.end(), ITEM_MAGNIFYING_GLASS) > 0 && itemsUsedThisTurn < 2) {
+        // Only scan if uncertainty exists (both > 0)
+        if (liveCount > 0 && blankCount > 0) {
+            processMove(p2Name, USE_ITEM, ITEM_MAGNIFYING_GLASS);
+            return true;
+        }
+    }
+    
+    // 3. Handcuff (If we plan to shoot opponent and they aren't cuffed)
+    // Use if we are confident it's live (so we get another turn effectively? No, handcuffs skip their turn)
+    // Use it to prevent them from retaliating if we miss or if we hit.
     if (!p1Handcuffed && std::count(p2Items.begin(), p2Items.end(), ITEM_HANDCUFFS) > 0 && itemsUsedThisTurn < 2) {
-        processMove(p2Name, USE_ITEM, ITEM_HANDCUFFS);
-        return true;
+         processMove(p2Name, USE_ITEM, ITEM_HANDCUFFS);
+         return true;
     }
     
-    // 3. Scan
-    if (std::count(p2Items.begin(), p2Items.end(), ITEM_MAGNIFYING_GLASS) > 0 && itemsUsedThisTurn < 2) {
-        processMove(p2Name, USE_ITEM, ITEM_MAGNIFYING_GLASS);
-        return true;
+    // 4. Inverter (If we know it's blank, or prob(Blank) is high)
+    // If we use inverter, Blank -> Live.
+    if (std::count(p2Items.begin(), p2Items.end(), ITEM_INVERTER) > 0 && itemsUsedThisTurn < 2) {
+        if (aiKnownShellState == AI_KNOWN_BLANK || (aiKnownShellState == AI_UNKNOWN && pLive < 0.4)) {
+            processMove(p2Name, USE_ITEM, ITEM_INVERTER);
+            return true;
+        }
     }
     
-    // 4. Inverter? Randomly if we have many
-    if (std::count(p2Items.begin(), p2Items.end(), ITEM_INVERTER) > 0 && (rand() % 3 == 0) && itemsUsedThisTurn < 2) {
-        processMove(p2Name, USE_ITEM, ITEM_INVERTER);
-        return true; 
+    // 5. Beer (If we want to skip a shell)
+    // Skip if we know it's blank and we want to shoot, OR if we want to drain shells?
+    // Let's say: use beer if we think it's blank, to dig for a live one to shoot opponent.
+    if (std::count(p2Items.begin(), p2Items.end(), ITEM_BEER) > 0 && itemsUsedThisTurn < 2) {
+        if (aiKnownShellState == AI_KNOWN_BLANK || (aiKnownShellState == AI_UNKNOWN && pLive < 0.5)) {
+             processMove(p2Name, USE_ITEM, ITEM_BEER);
+             return true;
+        }
+    }
+
+    // 6. Knife (Only use if we are VERY sure it is Live)
+    if (!knifeActive && std::count(p2Items.begin(), p2Items.end(), ITEM_KNIFE) > 0 && itemsUsedThisTurn < 2) {
+        if (aiKnownShellState == AI_KNOWN_LIVE || (aiKnownShellState == AI_UNKNOWN && pLive > 0.60)) {
+            processMove(p2Name, USE_ITEM, ITEM_KNIFE);
+            return true;
+        }
     }
     
-    // 5. Knife? If we are confident.
-    // For now, simple logic:
-    // SHOOT
+    // 7. SHOOTING LOGIC
+    // If Live is more likely -> Shoot Opponent
+    // If Blank is more likely -> Shoot Self (to get extra turn)
     
-    // Any other action logic needs implementation
-    
-    // Random shot strategy
-    
-    int roll = rand() % 100;
-    if (roll < 70) {
+    if (pLive >= 0.5) {
         processMove(p2Name, SHOOT_OPPONENT);
     } else {
         processMove(p2Name, SHOOT_SELF);
     }
+    
     return true;
 }
 
