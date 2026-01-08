@@ -27,6 +27,10 @@ public:
     std::string getP1Name() const { return p1Name; }
     std::string getP2Name() const { return p2Name; }
     std::vector<GameStatePacket> getHistory() const { return history; }
+    
+    // AI
+    bool isAiGame() const { return p2Fd == -1; }
+    bool executeAiTurn();
 
 private:
     std::string p1Name, p2Name;
@@ -34,6 +38,7 @@ private:
     
     std::vector<GameStatePacket> history; 
     std::chrono::steady_clock::time_point lastActionTime; 
+    int itemsUsedThisTurn = 0;
     int eloChangeP1 = 0;
     int eloChangeP2 = 0;
     

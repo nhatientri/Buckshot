@@ -8,7 +8,7 @@ namespace Buckshot {
 
 GameSession::GameSession(const std::string& p1, const std::string& p2, int fd1, int fd2)
     : p1Name(p1), p2Name(p2), p1Fd(fd1), p2Fd(fd2), hp1(5), hp2(5), gameOver(false),
-      p1Handcuffed(false), p2Handcuffed(false), knifeActive(false), inverterActive(false) {
+      p1Handcuffed(false), p2Handcuffed(false), knifeActive(false), inverterActive(false), itemsUsedThisTurn(0) {
     
     currentTurn = p1Name; // P1 starts
     lastActionTime = std::chrono::steady_clock::now();
@@ -145,11 +145,18 @@ void GameSession::processMove(const std::string& player, MoveType move, ItemType
     if (shells.empty()) loadShells(); 
 
     if (move == USE_ITEM) {
+        if (itemsUsedThisTurn >= 2) {
+            lastMessage += " Max 2 items per turn!";
+            return;
+        }
         useItem(player, item);
+        itemsUsedThisTurn++;
         return; // Turn does not end on item use
     }
 
     // Shooting Logic
+    itemsUsedThisTurn = 0; // Reset for next turn (whoever it is)
+
     bool isLive = shells.front();
     shells.pop_front();
     
@@ -296,6 +303,66 @@ GameStatePacket GameSession::getState() const {
     return pkt;
 }
 
+bool GameSession::executeAiTurn() {
+    if (gameOver) return false;
+    if (currentTurn != p2Name) return false;
+    
+    // Simple delay (assuming this is called ~60 times a sec? No, server loop is tight)
+    // Actually server loop delay is small.
+    // Let's use std::chrono check to allow 2 seconds delay.
+    // But `executeAiTurn` is called periodically.
+    
+    // We need to store "Last AI Action Time".
+    // Re-use `lastActionTime` but that tracks turn timeout. 
+    // It's fine. 
+    
+    auto now = std::chrono::steady_clock::now();
+    long long elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastActionTime).count();
+    
+    if (elapsed < 2000) return false; // Wait 2 seconds before acting
+    
+    // DECISION LOGIC
+    // 1. Heal
+    if (hp2 < 3 && std::count(p2Items.begin(), p2Items.end(), ITEM_CIGARETTES) > 0 && itemsUsedThisTurn < 2) {
+        processMove(p2Name, USE_ITEM, ITEM_CIGARETTES);
+        return true;
+    }
+    
+    // 2. Handcuff
+    if (!p1Handcuffed && std::count(p2Items.begin(), p2Items.end(), ITEM_HANDCUFFS) > 0 && itemsUsedThisTurn < 2) {
+        processMove(p2Name, USE_ITEM, ITEM_HANDCUFFS);
+        return true;
+    }
+    
+    // 3. Scan
+    if (std::count(p2Items.begin(), p2Items.end(), ITEM_MAGNIFYING_GLASS) > 0 && itemsUsedThisTurn < 2) {
+        processMove(p2Name, USE_ITEM, ITEM_MAGNIFYING_GLASS);
+        return true;
+    }
+    
+    // 4. Inverter? Randomly if we have many
+    if (std::count(p2Items.begin(), p2Items.end(), ITEM_INVERTER) > 0 && (rand() % 3 == 0) && itemsUsedThisTurn < 2) {
+        processMove(p2Name, USE_ITEM, ITEM_INVERTER);
+        return true; 
+    }
+    
+    // 5. Knife? If we are confident.
+    // For now, simple logic:
+    // SHOOT
+    
+    // Any other action logic needs implementation
+    
+    // Random shot strategy
+    
+    int roll = rand() % 100;
+    if (roll < 70) {
+        processMove(p2Name, SHOOT_OPPONENT);
+    } else {
+        processMove(p2Name, SHOOT_SELF);
+    }
+    return true;
+}
+
 std::string GameSession::getCurrentTurnUser() const {
     return currentTurn;
 }
@@ -310,6 +377,7 @@ void GameSession::startRound() {
     hp2 = 5;
     p1Items.clear();
     p2Items.clear();
+    itemsUsedThisTurn = 0;
     lastMessage = "New Round Started!";
     loadShells();
 }

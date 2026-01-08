@@ -54,7 +54,7 @@ void Server::run() {
                      send(game->getP2Fd(), &stateHead, sizeof(stateHead), 0);
                      send(game->getP2Fd(), &state, sizeof(state), 0);
                      
-                     // Record
+                     // Record and cleanup
                       std::string winner = game->getState().winner; 
                       std::string p1n = game->getP1Name();
                       std::string p2n = game->getP2Name();
@@ -79,6 +79,39 @@ void Server::run() {
                      ++it;
                  }
              }
+        }
+
+        // AI Logic Loop
+        for (auto it = activeGames.begin(); it != activeGames.end();) {
+            auto& game = *it;
+            if (game->isAiGame() && game->executeAiTurn()) {
+                 // Broadcast State
+                 GameStatePacket state = game->getState();
+                 PacketHeader stateHead;
+                 stateHead.command = CMD_GAME_STATE;
+                 stateHead.size = sizeof(GameStatePacket);
+                 
+                 // AI is P2, so P1 is the human
+                 if (game->getP1Fd() != -1) {
+                     send(game->getP1Fd(), &stateHead, sizeof(stateHead), 0);
+                     send(game->getP1Fd(), &state, sizeof(state), 0);
+                 }
+                 
+                 if (game->isGameOver()) {
+                     std::string winner = game->getState().winner; 
+                     std::string p1n = game->getP1Name();
+                     std::string p2n = game->getP2Name();
+                     std::string loser = (winner == p1n) ? p2n : p1n;
+                     
+                     // Handle AI game record? userManager might return 0 for "The Dealer"
+                     userManager.recordMatch(winner, loser);
+                     ReplayManager::saveReplay(p1n, p2n, winner, game->getHistory());
+                     
+                     it = activeGames.erase(it);
+                     continue;
+                 }
+            }
+            ++it;
         }
 
         struct timeval tv;
@@ -188,8 +221,20 @@ void Server::handleClientActivity(fd_set& readfds) {
 
                 // Disconnected cleanup
                 close(sd);
-                std::cout << "Host disconnected, fd " << sd << std::endl;
+                // Clean pending challenges
+                if (authenticatedUsers.count(sd)) {
+                    std::string u = authenticatedUsers[sd];
+                    pendingChallenges.erase(u);
+                    // Also remove any where u is the target? 
+                    // To do strictly: iterate map. 
+                    for (auto it = pendingChallenges.begin(); it != pendingChallenges.end(); ) {
+                        if (it->second == u) it = pendingChallenges.erase(it);
+                        else ++it;
+                    }
+                }
+
                 authenticatedUsers.erase(sd);
+                broadcastUserList(); // Update others
                 it = clientSockets.erase(it);
                 continue;
             } else if (valread == sizeof(PacketHeader)) {
@@ -226,6 +271,7 @@ void Server::handleClientActivity(fd_set& readfds) {
                             send(sd, &resp, sizeof(resp), 0);
                             if (success) {
                                 authenticatedUsers[sd] = req->username;
+                                broadcastUserList();
                             }
                             std::cout << "Login request: " << req->username << " -> " << success << std::endl;
                         }
@@ -265,24 +311,48 @@ void Server::handleClientActivity(fd_set& readfds) {
                             }
 
                             if (targetFd != -1) {
-                                // Self check
-                                if (target == authenticatedUsers[sd]) {
-                                     // Just ignore or send fail
-                                     // For now ignore
-                                     std::cout << "Ignored self challenge from " << target << std::endl;
-                                } else {
-                                    // Found, forward request
-                                // We need to send the Challenger's name to the Target
-                                ChallengePacket forwardPkt;
-                                std::string challenger = authenticatedUsers[sd];
-                                strncpy(forwardPkt.targetUser, challenger.c_str(), 32);
+                                std::string sender = authenticatedUsers[sd];
 
-                                PacketHeader hdr = {(uint32_t)sizeof(ChallengePacket), CMD_CHALLENGE_REQ};
-                                
-                                send(targetFd, &hdr, sizeof(hdr), 0);
-                                send(targetFd, &forwardPkt, sizeof(forwardPkt), 0);
-                                std::cout << "Forwarded challenge from " << challenger << " to " << target << " (" << targetFd << ")" << std::endl;
-                                } // Closing else
+                                // Check if this is a Cross-Challenge (Target already challenged Sender)
+                                if (pendingChallenges.count(target) && pendingChallenges[target] == sender) {
+                                    // MATCH FOUND! START GAME
+                                    std::cout << "Cross-Challenge matched: " << sender << " vs " << target << std::endl;
+                                    
+                                    pendingChallenges.erase(target); 
+                                    pendingChallenges.erase(sender); // Just in case
+
+                                    auto newGame = std::make_shared<GameSession>(target, sender, targetFd, sd);
+                                    activeGames.push_back(newGame);
+                                    
+                                    GameStatePacket state = newGame->getState();
+                                    PacketHeader stateHead;
+                                    stateHead.command = CMD_GAME_STATE;
+                                    stateHead.size = sizeof(GameStatePacket);
+                                    
+                                    send(targetFd, &stateHead, sizeof(stateHead), 0);
+                                    send(targetFd, &state, sizeof(state), 0);
+                                    
+                                    send(sd, &stateHead, sizeof(stateHead), 0);
+                                    send(sd, &state, sizeof(state), 0);
+                                    
+                                } else {
+                                    // Normal Challenge
+                                    pendingChallenges[sender] = target;
+                                    
+                                    // Self check
+                                    if (target == sender) {
+                                         // Just ignore
+                                    } else {
+                                        ChallengePacket forwardPkt;
+                                        strncpy(forwardPkt.targetUser, sender.c_str(), 32);
+
+                                        PacketHeader hdr = {(uint32_t)sizeof(ChallengePacket), CMD_CHALLENGE_REQ};
+                                        
+                                        send(targetFd, &hdr, sizeof(hdr), 0);
+                                        send(targetFd, &forwardPkt, sizeof(forwardPkt), 0);
+                                        std::cout << "Forwarded challenge from " << sender << " to " << target << " (" << targetFd << ")" << std::endl;
+                                    }
+                                }
                             } else {
                                 // User not found
                                 std::cout << "User " << target << " not found for challenge." << std::endl;
@@ -346,8 +416,23 @@ void Server::handleClientActivity(fd_set& readfds) {
                                 send(sd, &state, sizeof(state), 0);
 
                             }
-                         }
-                    } else if (header.command == CMD_LIST_REPLAYS) {
+                          }
+                     } else if (header.command == CMD_PLAY_AI) {
+                         // Start game
+                         std::string p1Name = authenticatedUsers[sd];
+                         std::string p2Name = "The Dealer";
+                         std::cout << "Starting AI Game for " << p1Name << std::endl;
+                         auto newGame = std::make_shared<GameSession>(p1Name, p2Name, sd, -1);
+                         activeGames.push_back(newGame);
+                         
+                         GameStatePacket state = newGame->getState();
+                         PacketHeader stateHead;
+                         stateHead.command = CMD_GAME_STATE;
+                         stateHead.size = sizeof(GameStatePacket);
+                         send(sd, &stateHead, sizeof(stateHead), 0);
+                         send(sd, &state, sizeof(state), 0);
+
+                     } else if (header.command == CMD_LIST_REPLAYS) {
                         std::string user = authenticatedUsers[sd];
                         std::string list = ReplayManager::getReplayList(user);
                         PacketHeader resp;
@@ -474,6 +559,25 @@ std::shared_ptr<GameSession> Server::getGameSession(int fd) {
         }
     }
     return nullptr;
+}
+
+void Server::broadcastUserList() {
+    std::string userList;
+    for (const auto& pair : authenticatedUsers) {
+        userList += pair.second + "\n";
+    }
+    
+    PacketHeader resp;
+    resp.command = CMD_LIST_USERS_RESP;
+    resp.size = userList.size();
+    
+    for (const auto& pair : authenticatedUsers) {
+        int fd = pair.first;
+        send(fd, &resp, sizeof(resp), 0);
+        if (resp.size > 0) {
+            send(fd, userList.c_str(), userList.size(), 0);
+        }
+    }
 }
 
 }

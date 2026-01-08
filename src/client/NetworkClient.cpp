@@ -122,6 +122,10 @@ void NetworkClient::processPacket(const PacketHeader& header, const std::vector<
             gameState.state = *(GameStatePacket*)body.data();
             lastStateUpdate = std::chrono::steady_clock::now();
             
+            // Track opponent
+            if (myUsername == gameState.state.p1Name) lastOpponent = gameState.state.p2Name;
+            else lastOpponent = gameState.state.p1Name;
+            
             if (gameState.state.gameOver) {
                 lastStatusMessage = "Game Over. Winner: " + std::string(gameState.state.winner);
                  // Don't set inGame=false immediately, let player see results
@@ -286,6 +290,21 @@ bool NetworkClient::hasReplayData() {
 std::vector<GameStatePacket> NetworkClient::getReplayData() {
     std::lock_guard<std::mutex> lock(dataMutex);
     return currentReplay;
+}
+
+std::string NetworkClient::getRematchTarget() {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    if (lastOpponent.empty()) return "";
+    
+    for (const auto& c : challenges) {
+        if (c == lastOpponent) return c;
+    }
+    return "";
+}
+
+void NetworkClient::sendPlayAiRequest() {
+    PacketHeader header = {0, CMD_PLAY_AI};
+    send(socketFd, &header, sizeof(header), 0);
 }
 
 }

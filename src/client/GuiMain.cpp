@@ -249,6 +249,46 @@ int main(int argc, char** argv) {
         // Render modal if open
         ShowStatusModal(currentStatusMsg);
 
+        // REMATCH POPUP CHECK
+        std::string rematchTarget = client.getRematchTarget();
+        if (!rematchTarget.empty()) {
+            ImGui::OpenPopup("Rematch Offer");
+        }
+    
+        if (ImGui::BeginPopupModal("Rematch Offer", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Player %s wants a rematch!", rematchTarget.c_str());
+            ImGui::Separator();
+    
+            if (ImGui::Button("ACCEPT", ImVec2(120, 0))) {
+                client.sendChallenge(rematchTarget); 
+                
+                // Remove challenge locally so popup doesn't reopen
+                auto challenges = client.getPendingChallenges();
+                for (size_t i=0; i<challenges.size(); ++i) {
+                    if (challenges[i] == rematchTarget) {
+                        client.removeChallenge(i);
+                        break;
+                    }
+                }
+                
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SetItemDefaultFocus();
+            ImGui::SameLine();
+            if (ImGui::Button("DECLINE", ImVec2(120, 0))) {
+                // Remove challenge locally
+                auto challenges = client.getPendingChallenges();
+                for (size_t i=0; i<challenges.size(); ++i) {
+                    if (challenges[i] == rematchTarget) {
+                        client.removeChallenge(i);
+                        break;
+                    }
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
         if (!client.isLoggedIn()) {
             // LOGIN SCREEN
             ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -366,7 +406,9 @@ int main(int argc, char** argv) {
                     ImGui::SetNextWindowPos(ImVec2(0, 19)); // Below menu bar
                     ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - 19));
                     ImGui::Begin("Lobby", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-                    if (ImGui::Button("Refresh List")) client.refreshList();
+                    if (ImGui::Button("Practice vs AI")) {
+                        client.sendPlayAiRequest();
+                    }
                     ImGui::SameLine();
                     if (ImGui::Button("Watch Replays")) {
                         client.requestReplayList();
@@ -405,6 +447,7 @@ int main(int argc, char** argv) {
                         }
                         ImGui::PopID();
                     }
+                    
                     ImGui::End();
                 }
             }

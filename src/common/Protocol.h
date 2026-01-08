@@ -39,6 +39,9 @@ enum Command : uint8_t {
     CMD_GET_REPLAY     = 42,
     CMD_REPLAY_DATA    = 43,
 
+    // AI
+    CMD_PLAY_AI = 45,
+
     // Resign
     CMD_RESIGN         = 50,
 

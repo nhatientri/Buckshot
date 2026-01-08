@@ -42,6 +42,7 @@ public:
     std::string getLeaderboardData();
     std::vector<std::string> getPendingChallenges(); // "Incoming challenge from X" events
     void removeChallenge(size_t index); // Remove locally
+    std::string getRematchTarget();
     
     ClientGameState getGameState();
     std::chrono::steady_clock::time_point getLastStateUpdateTime() const;
@@ -53,6 +54,8 @@ public:
     void requestReplayDownload(const std::string& filename);
     bool hasReplayData();
     std::vector<GameStatePacket> getReplayData(); // Consume replay data
+    
+    void sendPlayAiRequest();
     
     // Status flags used by UI to show popups/errors
     std::atomic<bool> loginSuccess;
@@ -79,6 +82,8 @@ private:
     std::vector<std::string> replayList;
     std::vector<GameStatePacket> currentReplay;
     bool replayReady;
+    
+    std::string lastOpponent;
     
     std::vector<std::string> challenges;
     ClientGameState gameState;
