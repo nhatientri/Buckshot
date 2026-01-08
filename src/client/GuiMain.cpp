@@ -198,12 +198,22 @@ int main(int argc, char** argv) {
     }
     
     // Audio Init
+    Mix_Music* bgMusic = nullptr;
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
         std::cerr << "SDL_mixer could not initialize! Error: " << Mix_GetError() << std::endl;
     } else {
         clickSound = Mix_LoadWAV("assets/click.wav");
         hoverSound = Mix_LoadWAV("assets/hover.wav");
         if (!clickSound || !hoverSound) std::cerr << "Failed to load WAVs! " << Mix_GetError() << std::endl;
+        
+        // Background Music
+        bgMusic = Mix_LoadMUS("assets/HIA.mp3");
+        if (bgMusic) {
+            Mix_PlayMusic(bgMusic, -1); // Loop infinitely
+            std::cout << "Playing background music..." << std::endl;
+        } else {
+             std::cerr << "Failed to load Music! " << Mix_GetError() << std::endl;
+        }
     }
 
     // GL 3.0 + GLSL 130
@@ -503,6 +513,7 @@ int main(int argc, char** argv) {
     // Cleanup
     if (clickSound) Mix_FreeChunk(clickSound);
     if (hoverSound) Mix_FreeChunk(hoverSound);
+    if (bgMusic) Mix_FreeMusic(bgMusic);
     Mix_CloseAudio();
     
     ImGui_ImplOpenGL3_Shutdown();
