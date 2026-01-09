@@ -83,6 +83,7 @@ void ShowStatusModal(const std::string& msg) {
     }
 }
 
+
 std::string GetItemName(uint8_t itemType) {
     switch (itemType) {
         case Buckshot::ITEM_BEER: return "Beer";
@@ -96,92 +97,311 @@ std::string GetItemName(uint8_t itemType) {
     }
 }
 
-// Helper for Game Screen
+// Helper to draw a specialized item card
+// Returns true if clicked
+bool DrawItemCard(uint8_t itemType, bool clickable, const ImVec2& size = ImVec2(80, 100)) {
+    if (itemType == 0) {
+        // Draw Empty Slot (Placeholder)
+        ImGui::BeginGroup();
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 5.0f);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.1f, 0.5f)); // Darker, semi-transparent
+            ImGui::BeginChild("##empty", size, true, ImGuiWindowFlags_NoScrollbar);
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+        ImGui::EndGroup();
+        return false;
+    }
+
+    std::string name = GetItemName(itemType);
+    std::string label = name + "##card"; 
+    
+    ImGui::PushID(itemType);
+    bool pressed = false;
+
+    // Style the card
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 5.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+    
+    // If clickable, change color on hover/active
+    if (clickable) {
+         // This is a bit manual for a custom "Button" look with child window, 
+         // but effectively we can just use a Button with size.
+         // Let's use a Button for simplicity but style it.
+         ImGui::PopStyleColor(); // Remove ChildBg to use Button colors
+         pressed = ImGui::Button(name.c_str(), size);
+         
+         if (ImGui::IsItemHovered()) {
+             ImGuiID id = ImGui::GetID(name.c_str());
+             if (id != lastHoveredId) {
+                 if (hoverSound) Mix_PlayChannel(-1, hoverSound, 0);
+                 lastHoveredId = id;
+             }
+         }
+         if (pressed && clickSound) Mix_PlayChannel(-1, clickSound, 0);
+    } else {
+        ImGui::BeginChild(label.c_str(), size, true, ImGuiWindowFlags_NoScrollbar);
+        
+        // Centered text
+        ImVec2 textSize = ImGui::CalcTextSize(name.c_str());
+        ImGui::SetCursorPos(ImVec2((size.x - textSize.x) * 0.5f, (size.y - textSize.y) * 0.5f));
+        ImGui::Text("%s", name.c_str());
+        
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
+    
+    ImGui::PopStyleVar();
+    ImGui::PopID();
+    
+    return pressed;
+}
+
+// Helper to draw player info box
+void DrawPlayerInfo(const char* name, int hp, int elo, bool isMe) {
+    ImGui::BeginGroup();
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 5.0f);
+    ImGui::BeginChild(isMe ? "MeInfo" : "OppInfo", ImVec2(0, 100), true);
+    
+    ImGui::Text("%s", name);
+    ImGui::Text("Elo: %d", elo);
+    ImGui::Separator();
+    
+    // HP Display (Hearts or Bars)
+    ImGui::Text("HP: ");
+    ImGui::SameLine();
+    for (int i = 0; i < hp; ++i) {
+        ImGui::TextColored(ImVec4(1, 0, 0, 1), "LOG"); // Using 'LOG' as a placeholder symbol if no icon? 
+                                                      // Actually let's use '|' or '♥' roughly
+        ImGui::SameLine();
+        ImGui::Text("♥");
+        ImGui::SameLine();
+    }
+    
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::EndGroup();
+}
+
+// Main Game Screen
 void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient& client, bool readOnly = false) {
     ImGuiIO& io = ImGui::GetIO();
+    
+    // Full screen window for the game
     ImGui::SetNextWindowPos(ImVec2(0, 19));
     ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - 19));
-    ImGui::Begin("Game Board", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-    
+    ImGui::Begin("Game Board", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+
     bool amIP1 = (client.getUsername() == std::string(s.p1Name));
     
     // Aliases
     int myHp = amIP1 ? s.p1Hp : s.p2Hp;
     int oppHp = amIP1 ? s.p2Hp : s.p1Hp;
+    // For now assuming we don't track opponent elo in GameState packet individually unless we parse it or add it.
+    // The previous code didn't show opponent Elo, so we'll omit it or placeholder.
+    // Actually GameStatePacket only has p1EloChange/p2EloChange at end. 
+    // We'll just show Names.
+    
     bool myHandcuffed = amIP1 ? s.p1Handcuffed : s.p2Handcuffed;
     bool oppHandcuffed = amIP1 ? s.p2Handcuffed : s.p1Handcuffed;
     const uint8_t* myInv = amIP1 ? s.p1Inventory : s.p2Inventory;
     const uint8_t* oppInv = amIP1 ? s.p2Inventory : s.p1Inventory;
     
-    // TOP: Opponent
-    if (opponentTexture != 0) {
-        ImGui::Image((void*)(intptr_t)opponentTexture, ImVec2(100, 100)); // Display 100x100
-        ImGui::SameLine();
-    }
-    ImGui::BeginGroup();
-    ImGui::Text("OPPONENT (%s): HP [%d] | Items:", amIP1 ? s.p2Name : s.p1Name, oppHp);
-    for(int i=0;i<8;++i) {
-         if (oppInv[i]) {
-             ImGui::SameLine(); 
-             ImGui::Text("[%s]", GetItemName(oppInv[i]).c_str());
-         }
-    }
-    if (oppHandcuffed) ImGui::TextColored(ImVec4(1,0,0,1), "HANDCUFFED");
-    ImGui::EndGroup();
+    // Layout: 2 Columns. 
+    // Left: Game Board (75%)
+    // Right: Logs (25%)
     
-    ImGui::Separator();
+    float boardWidth = io.DisplaySize.x * 0.75f;
     
-    // CENTER: Table
-    ImGui::Text("Shells in Shotgun: %d", s.shellsRemaining);
-    ImGui::TextDisabled("Remaining: %d Live, %d Blank", s.liveCount, s.blankCount);
-    if (s.knifeActive) ImGui::TextColored(ImVec4(1,0,0,1), "KNIFE ACTIVE (Double Damage)");
+    ImGui::Columns(2, "GameSplit", false); // false = no resizing border for now if we want fixed
+    ImGui::SetColumnWidth(0, boardWidth);
     
-    ImGui::Separator();
+    // LEFT COLUMN: GAME BOARD
+    // -----------------------
+    float windowHeight = ImGui::GetWindowHeight();
     
-    // BOTTOM: Me
-    ImGui::Text("YOU (%s): HP [%d] | Items:", amIP1 ? s.p1Name : s.p2Name, myHp);
-    for(int i=0;i<8;++i) {
-        if (myInv[i]) {
-             ImGui::SameLine(); 
-             ImGui::PushID(i); 
-             std::string label = GetItemName(myInv[i]);
-             if (readOnly) {
-                 PlaySoundButton(label.c_str()); // Click does nothing but plays sound
-             } else {
-                 if (PlaySoundButton(label.c_str())) {
-                     client.sendMove(Buckshot::USE_ITEM, (Buckshot::ItemType)myInv[i]);
-                 }
-             }
+    // 1. OPPONENT SECTION (TOP)
+    ImGui::PushID("OpponentSection");
+    ImGui::BeginGroup(); // Opponent Block
+    {
+        // Info Box
+        ImGui::Text("OPPONENT (%s)", amIP1 ? s.p2Name : s.p1Name);
+        ImGui::ProgressBar((float)oppHp / 5.0f, ImVec2(-1, 20), ""); // Simplified HP bar
+        
+        // Item Row
+        ImGui::Spacing();
+        // Item Row
+        ImGui::Spacing();
+        for(int i=0;i<6;++i) {
+             ImGui::PushID(i);
+             // Always draw (DrawItemCard handles 0)
+             DrawItemCard(oppInv[i], false, ImVec2(70, 80)); 
              ImGui::PopID();
+             ImGui::SameLine(); 
+        }
+        if (oppHandcuffed) ImGui::TextColored(ImVec4(1,0,0,1), "[HANDCUFFED]");
+    }
+    ImGui::EndGroup();
+    ImGui::PopID();
+    
+    // 2. CENTER SECTION (TURN & ACTIONS)
+    // Safely advance cursor to 35% height
+    float centerTargetY = windowHeight * 0.35f;
+    float currentY_Center = ImGui::GetCursorPosY();
+    if (centerTargetY > currentY_Center) {
+        ImGui::Dummy(ImVec2(0, centerTargetY - currentY_Center)); 
+    }
+    // ImGui::SetCursorPosY(windowHeight * 0.35f); // Removed unsafe call 
+    ImGui::BeginGroup(); 
+    {
+        // Center alignment wrapper
+        float availW = ImGui::GetContentRegionAvail().x;
+        
+        // Turn Info
+        std::string turnText = std::string("Turn: ") + s.currentTurnUser;
+        bool isMyTurn = (client.getUsername() == std::string(s.currentTurnUser));
+        
+        if (s.gameOver) {
+            if (client.getUsername() == std::string(s.winner)) {
+                 turnText = "YOU WIN!";
+                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0,1,0,1)); // Green
+            } else {
+                 turnText = "YOU LOSE!";
+                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,0,0,1)); // Red
+            }
+        } else {
+            if (isMyTurn) {
+                 turnText = "YOUR TURN";
+                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0,1,0,1)); // Green
+            } else {
+                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,0,0,1)); // Red
+            }
+        }
+        
+        ImGui::SetWindowFontScale(1.5f); // Make bigger
+        float textW = ImGui::CalcTextSize(turnText.c_str()).x;
+        // ImGui::SetCursorPosX((boardWidth - textW) * 0.5f);
+        ImGui::NewLine(); 
+        ImGui::SameLine((boardWidth - textW) * 0.5f);
+        ImGui::Text("%s", turnText.c_str());
+        ImGui::SetWindowFontScale(1.0f); // Reset
+        
+        ImGui::PopStyleColor(); // Pop Color
+
+        // Ammo Info
+        std::string ammoText = "Shells: " + std::to_string(s.liveCount) + " Live / " + std::to_string(s.blankCount) + " Blank";
+        if (s.liveCount == 0 && s.blankCount == 0) ammoText = "Shells: ???"; // or based on shellsRemaining
+        
+        textW = ImGui::CalcTextSize(ammoText.c_str()).x;
+        // ImGui::SetCursorPosX((boardWidth - textW) * 0.5f);
+        ImGui::NewLine();
+        ImGui::SameLine((boardWidth - textW) * 0.5f);
+        ImGui::Text("%s", ammoText.c_str());
+        
+        ImGui::Spacing(); ImGui::Spacing();
+        
+        // Action Buttons
+        if (!readOnly && !s.gameOver) {
+            
+            // Layout buttons centered
+            float btnW = 150;
+            float totalBtnW = (isMyTurn) ? (btnW * 2 + 20) : 0; // Shoot Opp + Shoot Self
+            
+            if (isMyTurn) {
+                // ImGui::SetCursorPosX((boardWidth - totalBtnW) * 0.5f);
+                ImGui::NewLine();
+                ImGui::SameLine((boardWidth - totalBtnW) * 0.5f);
+                
+                if (PlaySoundButton("SHOOT OPPONENT", ImVec2(btnW, 40))) {
+                    client.sendMove(Buckshot::SHOOT_OPPONENT);
+                }
+                ImGui::SameLine();
+                if (PlaySoundButton("SHOOT SELF", ImVec2(btnW, 40))) {
+                    client.sendMove(Buckshot::SHOOT_SELF);
+                }
+            }
+            
+            // Pause Button (always visible if needed, or check logic)
+            // Centered below
+            ImGui::Spacing();
+            const char* pauseLabel = s.isPaused ? "RESUME" : "PAUSE";
+            // ImGui::SetCursorPosX((boardWidth - 100) * 0.5f);
+            if (std::string(s.p2Name) == "The Dealer" || std::string(s.p1Name) == "The Dealer") { // Simple check
+                 ImGui::NewLine();
+                 ImGui::SameLine((boardWidth - 100) * 0.5f);
+                 if (PlaySoundButton(pauseLabel, ImVec2(100, 30))) {
+                     client.sendTogglePause();
+                 }
+            }
         }
     }
-    if (myHandcuffed) ImGui::TextColored(ImVec4(1,0,0,1), "HANDCUFFED");
+    ImGui::EndGroup();
     
-    ImGui::Separator();
+    // 3. PLAYER SECTION (BOTTOM)
+    // Pin to bottom safely
+    // We calculate the remaining space and add a dummy if needed, or simply set cursor
+    // The crash happens because we jump past the current content size.
     
-    // ACTIONS
+    float currentY = ImGui::GetCursorPosY();
+    float targetY = windowHeight - 160.0f;
+    
+    if (targetY > currentY) {
+        ImGui::Dummy(ImVec2(0, targetY - currentY)); // Fill space explicitly
+    }
+    // Now we are roughly at targetY
+    
+    ImGui::PushID("PlayerSection");
+    ImGui::BeginGroup();
+    {
+        // Item Row
+        if (myHandcuffed) ImGui::TextColored(ImVec4(1,0,0,1), "[HANDCUFFED]");
+        for(int i=0;i<6;++i) {
+             ImGui::PushID(i);
+             // Always draw. For Item 0, not clickable implicitly by DrawItemCard logic
+             // But we pass !readOnly. DrawItemCard handles 0 -> not clickable.
+             if (DrawItemCard(myInv[i], !readOnly, ImVec2(100, 120))) {
+                  client.sendMove(Buckshot::USE_ITEM, (Buckshot::ItemType)myInv[i]);
+             }
+             ImGui::PopID();
+             ImGui::SameLine(); 
+        }
+        ImGui::NewLine();
+        
+        // Info Box
+        ImGui::Text("YOU (%s)", client.getUsername().c_str());
+        ImGui::ProgressBar((float)myHp / 5.0f, ImVec2(-1, 20), "");
+    }
+    ImGui::EndGroup();
+    ImGui::PopID();
+    
+    ImGui::NextColumn(); // Switch to Right Column
+    
+    // RIGHT COLUMN: SIDEBAR (LOGS & MENU)
+    // -----------------------------------
+    
+    // Log Window (Taking up most of space)
+    float sidebarW = ImGui::GetContentRegionAvail().x;
+    float bottomH = 60.0f; // Space for buttons at bottom
+    
+    ImGui::BeginChild("LogRegion", ImVec2(0, -bottomH), true);
+    ImGui::TextWrapped("%s", s.message);
+    // Ideally we'd have a vector of messages to scroll, but 's.message' is just the latest state message.
+    // The original code just showed "Log: %s". We'll stick to that for now or append locally?
+    // Sticking to Protocol 'message' for now as that's what we have.
+    ImGui::EndChild();
+    
+    // Bottom Action Area
+    ImGui::BeginChild("ActionRegion", ImVec2(0, 0), false); // Remaining height
     if (s.gameOver) {
-        ImGui::Text("GAME OVER! Winner: %s", s.winner);
-        
-        // Show Elo change if relevant
-        std::string p1Name = s.p1Name;
-        std::string p2Name = s.p2Name;
-        std::string myName = client.getUsername();
-        
-        int myDelta = 0;
-        if (myName == p1Name) myDelta = s.p1EloChange;
-        else if (myName == p2Name) myDelta = s.p2EloChange;
-        
-        if (myDelta > 0) ImGui::TextColored(ImVec4(0,1,0,1), "Elo: +%d", myDelta);
-        else if (myDelta < 0) ImGui::TextColored(ImVec4(1,0,0,1), "Elo: %d", myDelta); 
-        else ImGui::Text("Elo: No Change");
+        if (s.winner[0] != '\0') {
+             ImGui::TextWrapped("Winner: %s", s.winner);
+        }
         
         if (!readOnly) {
-            if (PlaySoundButton("Back to Lobby")) {
+            if (PlaySoundButton("BACK TO LOBBY", ImVec2(-1, 0))) {
                 client.resetGame();
             }
-            ImGui::SameLine();
-            if (PlaySoundButton("Rematch")) {
+            if (PlaySoundButton("REMATCH", ImVec2(-1, 0))) {
                 std::string myName = client.getUsername();
                 std::string opponentName = (myName == std::string(s.p1Name)) ? s.p2Name : s.p1Name;
                 client.resetGame();
@@ -189,65 +409,18 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
             }
         }
     } else {
-        ImGui::Text("Turn: %s", s.currentTurnUser);
-        ImGui::SameLine();
-        
-         // Interpolate time
-        auto now = std::chrono::steady_clock::now();
-        auto lastUpdate = client.getLastStateUpdateTime();
-        int currentVisualTime = 0;
-        if (s.isPaused) {
-             currentVisualTime = s.turnTimeRemaining;
-        } else {
-             int elapsedSinceUpdate = std::chrono::duration_cast<std::chrono::seconds>(now - lastUpdate).count();
-             currentVisualTime = s.turnTimeRemaining - elapsedSinceUpdate;
-        }
-        if (currentVisualTime < 0) currentVisualTime = 0;
-
-        if (currentVisualTime <= 10) {
-            ImGui::TextColored(ImVec4(1, 0, 0, 1), "(%ds)", currentVisualTime);
-        } else {
-             ImGui::Text("(%ds)", currentVisualTime);
-        }
-
+        // In Game Surrender
         if (!readOnly) {
-            if (client.getUsername() == std::string(s.currentTurnUser)) {
-                if (PlaySoundButton("SHOOT OPPONENT")) client.sendMove(Buckshot::SHOOT_OPPONENT);
-                ImGui::SameLine();
-                if (PlaySoundButton("SHOOT SELF")) client.sendMove(Buckshot::SHOOT_SELF);
-                
-                // AI Pause Check (Opponent is "The Dealer")
-                // Simplified check: since s.p2Name is "The Dealer" often
-                if (std::string(s.p2Name) == "The Dealer" || std::string(s.p1Name) == "The Dealer") {
-                    ImGui::SameLine();
-                     if (s.isPaused) {
-                         if (PlaySoundButton("RESUME")) client.sendTogglePause();
-                         ImGui::TextColored(ImVec4(1, 1, 0, 1), " (GAME PAUSED)");
-                     } else {
-                         if (PlaySoundButton("PAUSE")) client.sendTogglePause();
-                     }
-                }
-
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(0.0f, 0.7f, 0.7f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, (ImVec4)ImColor::HSV(0.0f, 0.8f, 0.8f));
-                if (PlaySoundButton("SURRENDER")) {
-                    client.sendResign();
-                }
-                ImGui::PopStyleColor(3);
-            } else {
-                 ImGui::TextDisabled("Waiting for opponent...");
+            ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
+            if (PlaySoundButton("SURRENDER", ImVec2(-1, 40))) {
+                client.sendResign();
             }
-        } else {
-            ImGui::TextDisabled("(Replay Mode - Read Only)");
+            ImGui::PopStyleColor();
         }
     }
+    ImGui::EndChild();
     
-    ImGui::Separator();
-    ImGui::TextWrapped("Log: %s", s.message);
-    
-    ImGui::End();
+    ImGui::End(); // End Game Board Window
 }
 
 void ShowRulesWindow(bool* open) {
@@ -589,7 +762,6 @@ int main(int argc, char** argv) {
                 }
                 
                 ImGui::End();
-                ImGui::End();
             }
 
             // FRIENDS WINDOW
@@ -728,7 +900,7 @@ int main(int argc, char** argv) {
                  }
             }
 
-            if (!gs.inGame || gs.state.gameOver) {
+            if (!gs.inGame) {
                 if (!showReplayViewer) { // Don't show lobby over replay
                     // LOBBY
                     ImGui::SetNextWindowPos(ImVec2(0, 19)); // Below menu bar

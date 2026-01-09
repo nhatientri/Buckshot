@@ -49,28 +49,53 @@ void GameSession::loadShells() {
 }
 
 void GameSession::distributeItems() {
-    // Distribute fixed 3 items, max 6 in inventory
+    // Distribute fixed 3 items, max 8 in inventory (matches UI)
     static std::random_device rd;
     static std::mt19937 gen(rd());
     std::uniform_int_distribution<> itemDist(1, 7); // 1-7 (ItemType enum)
 
-    int count = 3;
-    for (int i=0; i<count; ++i) {
-        if (p1Items.size() < 6) p1Items.push_back((ItemType)itemDist(gen));
-        if (p2Items.size() < 6) p2Items.push_back((ItemType)itemDist(gen));
-    }
+    // Ensure vectors are sized to 6
+    if (p1Items.size() < 6) p1Items.resize(6, ITEM_NONE);
+    if (p2Items.size() < 6) p2Items.resize(6, ITEM_NONE);
+
+    // Helper to add items
+    auto addItems = [&](std::vector<ItemType>& inv) {
+        int currentCount = 0;
+        for (auto t : inv) if (t != ITEM_NONE) currentCount++;
+
+        for (int i = 0; i < 3; ++i) { // Add up to 3 items
+            if (currentCount >= 6) break;
+            
+            // Find empty slot
+            for (auto& slot : inv) {
+                if (slot == ITEM_NONE) {
+                    slot = (ItemType)itemDist(gen);
+                    currentCount++;
+                    break;
+                }
+            }
+        }
+    };
+
+    addItems(p1Items);
+    addItems(p2Items);
+
     lastMessage += " Items distributed.";
 }
 
 void GameSession::useItem(const std::string& player, ItemType item) {
     std::vector<ItemType>& inventory = (player == p1Name) ? p1Items : p2Items;
+    
+    // Find the item
     auto it = std::find(inventory.begin(), inventory.end(), item);
     if (it == inventory.end()) {
         lastMessage = player + " tried to use invalid item!";
         return;
     }
     
-    inventory.erase(it);
+    // Mark as consumed (ITEM_NONE) instead of erasing to preserve order
+    *it = ITEM_NONE; 
+    
     lastMessage = player + " used ";
 
     if (item == ITEM_BEER) {
@@ -250,9 +275,14 @@ bool GameSession::checkTimeout(long long timeoutSeconds) {
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastActionTime).count();
     
+    // Bump timeout to 60s minimum effectively if the passed value is small?
+    // User complaint "randomly lose" might mean the server loop calls this with a short timer.
+    
     if (elapsed > timeoutSeconds) {
+        // Double check: if it's the very first turn, give more time?
         resign(currentTurn); // Current turn player loses
         lastMessage += " (AFK TIMEOUT)"; 
+        std::cout << "Session timeout: " << currentTurn << " AFK for " << elapsed << "s" << std::endl;
         return true;
     }
     return false;
@@ -437,6 +467,7 @@ void GameSession::startRound() {
     p2Items.clear();
     itemsUsedThisTurn = 0;
     lastMessage = "New Round Started!";
+    lastActionTime = std::chrono::steady_clock::now(); // Reset timer
     loadShells();
 }
 
