@@ -14,7 +14,7 @@
 namespace Buckshot {
 
 Server::Server(int port) : port(port), running(false), serverSocket(-1) {
-    userManager.loadUsers();
+    // userManager.loadUsers(); // Migration happens in constructor now
     lastTimeoutCheck = std::chrono::steady_clock::now();
 }
 

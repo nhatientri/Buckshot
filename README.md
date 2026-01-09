@@ -62,10 +62,30 @@ sudo apt-get install build-essential cmake libsdl2-dev libsdl2-image-dev libsdl2
    make
    ```
 
-This will produce three executables in the `build` directory:
-- `server`: The game server.
-- `client`: A CLI-based client (legacy/debug).
-- `client_gui`: The main graphical client.
+## Running the Game
+
+### 1. Start the Server
+```bash
+./build/server
+# OR specify a port (default 8080)
+./build/server 9000
+```
+The server will start on port `8080` (or your custom port).
+
+### 2. Start the Client
+**Localhost (Single Computer):**
+```bash
+./build/client_gui
+```
+
+**LAN / Multi-Computer:**
+Pass the Server's IP address (and optional Port) as arguments:
+```bash
+./build/client_gui 192.168.1.5
+# OR with Port
+./build/client_gui 192.168.1.5 9000
+```
+*(Replace `192.168.1.5` with the actual IP address of the server computer)*
 
 ## Docker Support
 

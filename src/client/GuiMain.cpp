@@ -355,11 +355,22 @@ int main(int argc, char** argv) {
     if (opponentTexture != 0) std::cout << "Opponent texture loaded successfully: " << opponentTexture << std::endl;
 
     // Network Client
+    // Network Client
+    std::string serverIp = "127.0.0.1";
+    int serverPort = 8080;
+
+    if (argc > 1) {
+        serverIp = argv[1];
+    }
+    if (argc > 2) {
+        serverPort = std::stoi(argv[2]);
+    }
+    
     Buckshot::NetworkClient client;
-    if (!client.connectToServer("127.0.0.1", 8080)) {
-        std::cerr << "Failed to connect to server!" << std::endl;
+    if (!client.connectToServer(serverIp, serverPort)) {
+        std::cerr << "Failed to connect to server at " << serverIp << ":" << serverPort << "!" << std::endl;
     } else {
-        std::cout << "GUI: Connected to server successfully!" << std::endl;
+        std::cout << "GUI: Connected to server " << serverIp << ":" << serverPort << " successfully!" << std::endl;
     }
 
     // State

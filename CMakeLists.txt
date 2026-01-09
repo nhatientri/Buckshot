@@ -11,15 +11,19 @@ file(GLOB COMMON_SOURCES "src/common/*.cpp")
 
 # Find SDL2
 find_package(SDL2 REQUIRED)
+find_package(SDL2_image REQUIRED)
+find_package(SDL2_mixer REQUIRED)
+find_package(SQLite3 REQUIRED)
+
+include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIRS} ${SDL2_MIXER_INCLUDE_DIRS} ${SQLite3_INCLUDE_DIRS})
+
 # Find SDL2_mixer using PkgConfig (more robust on Mac/Homebrew)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
-include_directories(${SDL2_MIXER_INCLUDE_DIRS})
 link_directories(${SDL2_MIXER_LIBRARY_DIRS})
 
 # Find SDL2_image using PkgConfig
 pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
-include_directories(${SDL2_IMAGE_INCLUDE_DIRS})
 link_directories(${SDL2_IMAGE_LIBRARY_DIRS})
 
 # ImGui Sources
@@ -36,8 +40,14 @@ set(IMGUI_SOURCES
 include_directories(${IMGUI_DIR} ${IMGUI_DIR}/backends)
 
 # Server Target
-add_executable(server src/server/main.cpp src/server/Server.cpp src/server/UserManager.cpp src/server/GameSession.cpp src/server/ReplayManager.cpp ${COMMON_SOURCES})
-target_link_libraries(server PRIVATE pthread)
+add_executable(server 
+    src/server/main.cpp
+    src/server/Server.cpp
+    src/server/GameSession.cpp
+    src/server/UserManager.cpp
+    src/server/ReplayManager.cpp
+)
+target_link_libraries(server ${SDL2_LIBRARIES} ${SDL2_IMAGE_LIBRARIES} ${SDL2_MIXER_LIBRARIES} SQLite::SQLite3)
 
 # Client Console Target
 add_executable(client src/client/main.cpp src/client/Client.cpp ${COMMON_SOURCES})

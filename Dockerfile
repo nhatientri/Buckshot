@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     libsdl2-dev \
     libsdl2-mixer-dev \
     libsdl2-image-dev \
+    libsqlite3-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 

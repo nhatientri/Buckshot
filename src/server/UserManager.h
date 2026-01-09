@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
-#include <unordered_map>
+#include <sqlite3.h>
+#include <optional>
+#include <vector>
 
 namespace Buckshot {
 
@@ -14,19 +16,24 @@ struct User {
 
 class UserManager {
 public:
+    UserManager();
+    ~UserManager();
+
     bool registerUser(const std::string& username, const std::string& password);
     bool loginUser(const std::string& username, const std::string& password);
-    User* getUser(const std::string& username);
-    void loadUsers();
+    std::optional<User> getUser(const std::string& username);
     
-    // Post-Game
     // Returns pair<int, int> -> (winnerDelta, loserDelta)
     std::pair<int, int> recordMatch(const std::string& winner, const std::string& loser);
     std::string getLeaderboard();
 
+    // Migration
+    void migrateFromFlatFile(const std::string& filepath);
+
 private:
-    std::unordered_map<std::string, User> users;
-    void saveUsers();
+    sqlite3* db = nullptr;
+    
+    void initDatabase();
     void logMatch(const std::string& winner, const std::string& loser, int winnerElo, int loserElo);
 };
 
