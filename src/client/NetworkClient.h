@@ -62,7 +62,12 @@ public:
     void sendLeaveQueue();
     
     // Pause
+    // Pause
     void sendTogglePause();
+    
+    // History
+    void requestHistory();
+    std::vector<HistoryEntry> getHistory();
     
     // Status flags used by UI to show popups/errors
     std::atomic<bool> loginSuccess;
@@ -88,6 +93,7 @@ private:
     
     std::vector<std::string> replayList;
     std::vector<GameStatePacket> currentReplay;
+    std::vector<HistoryEntry> history;
     bool replayReady;
     
     std::string lastOpponent;

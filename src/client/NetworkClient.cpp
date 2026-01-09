@@ -148,7 +148,15 @@ void NetworkClient::processPacket(const PacketHeader& header, const std::vector<
             for(int i=0; i<count; ++i) currentReplay.push_back(pkts[i]);
         }
         replayReady = true;
-        lastStatusMessage = "Replay Downloaded!";
+        // lastStatusMessage = "Replay Downloaded!";
+    } else if (header.command == CMD_HISTORY_DATA) {
+        int count = header.size / sizeof(HistoryEntry);
+        history.clear();
+        if (count > 0) {
+            HistoryEntry* entries = (HistoryEntry*)body.data();
+            for(int i=0; i<count; ++i) history.push_back(entries[i]);
+        }
+        // lastStatusMessage = "History Updated"; // Removed to prevent popup blocking UI
     }
 }
 
@@ -316,6 +324,16 @@ void NetworkClient::sendJoinQueue() {
 void NetworkClient::sendLeaveQueue() {
     PacketHeader header = {0, CMD_QUEUE_LEAVE};
     send(socketFd, &header, sizeof(header), 0);
+}
+
+void NetworkClient::requestHistory() {
+    PacketHeader header = {0, CMD_GET_HISTORY};
+    send(socketFd, &header, sizeof(header), 0);
+}
+
+std::vector<HistoryEntry> NetworkClient::getHistory() {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    return history;
 }
 
 void NetworkClient::sendTogglePause() {

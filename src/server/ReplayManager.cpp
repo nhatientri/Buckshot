@@ -10,7 +10,7 @@ namespace Buckshot {
 
 const std::string REPLAY_DIR = "replays";
 
-void ReplayManager::saveReplay(const std::string& p1, const std::string& p2, const std::string& winner, const std::vector<GameStatePacket>& history) {
+std::string ReplayManager::saveReplay(const std::string& p1, const std::string& p2, const std::string& winner, const std::vector<GameStatePacket>& history) {
     if (!std::filesystem::exists(REPLAY_DIR)) {
         std::filesystem::create_directory(REPLAY_DIR);
     }
@@ -21,10 +21,13 @@ void ReplayManager::saveReplay(const std::string& p1, const std::string& p2, con
     ss << std::put_time(&tm, "%Y%m%d_%H%M%S");
     std::string timestamp = ss.str();
 
-    std::string filename = REPLAY_DIR + "/" + timestamp + "_" + winner + "_vs_" + (winner == p1 ? p2 : p1) + ".replay";
+    // Just return the basename for storage? Or full relative path?
+    // Client needs to request it. Let's return just filename.
+    std::string filenameBase = timestamp + "_" + winner + "_vs_" + (winner == p1 ? p2 : p1) + ".replay";
+    std::string filename = REPLAY_DIR + "/" + filenameBase;
 
     std::ofstream file(filename, std::ios::binary);
-    if (!file.is_open()) return;
+    if (!file.is_open()) return "";
 
     // Header: P1, P2, Winner, Count
     // Use fixed size for simplicity or length prefixes
@@ -34,6 +37,7 @@ void ReplayManager::saveReplay(const std::string& p1, const std::string& p2, con
     file.write((char*)history.data(), count * sizeof(GameStatePacket));
     
     std::cout << "Saved replay to " << filename << std::endl;
+    return filenameBase;
 }
 
 std::string ReplayManager::getReplayList(const std::string& userFilter) {

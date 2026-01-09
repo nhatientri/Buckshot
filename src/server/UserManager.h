@@ -3,6 +3,7 @@
 #include <sqlite3.h>
 #include <optional>
 #include <vector>
+#include "../common/Protocol.h"
 
 namespace Buckshot {
 
@@ -24,7 +25,8 @@ public:
     std::optional<User> getUser(const std::string& username);
     
     // Returns pair<int, int> -> (winnerDelta, loserDelta)
-    std::pair<int, int> recordMatch(const std::string& winner, const std::string& loser);
+    std::pair<int, int> recordMatch(const std::string& winner, const std::string& loser, const std::string& replayFile = "");
+    std::vector<HistoryEntry> getHistory(const std::string& username);
     std::string getLeaderboard();
 
     // Migration
@@ -34,7 +36,7 @@ private:
     sqlite3* db = nullptr;
     
     void initDatabase();
-    void logMatch(const std::string& winner, const std::string& loser, int winnerElo, int loserElo);
+    void logMatch(const std::string& winner, const std::string& loser, int winnerElo, int loserElo, const std::string& replayFile);
 };
 
 }

@@ -53,7 +53,19 @@ enum Command : uint8_t {
     // Pause
     CMD_TOGGLE_PAUSE   = 70,
 
+    // History
+    CMD_GET_HISTORY    = 80,
+    CMD_HISTORY_DATA   = 81,
+
     CMD_ERROR = 99
+};
+
+struct HistoryEntry {
+    char timestamp[32];
+    char opponent[32];
+    char result[8]; // "WIN", "LOSS", "DRAW"?
+    int32_t eloChange;
+    char replayFile[64]; // Filename to request replay
 };
 
 // Fixed size structs for simplicity in "raw socket" context, 

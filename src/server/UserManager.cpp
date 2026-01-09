@@ -26,6 +26,8 @@ void UserManager::initDatabase() {
         return;
     }
 
+// ... (previous code)
+
     const char* sql = "CREATE TABLE IF NOT EXISTS users ("
                       "username TEXT PRIMARY KEY,"
                       "password TEXT NOT NULL,"
@@ -38,6 +40,7 @@ void UserManager::initDatabase() {
                       "loser TEXT,"
                       "winner_elo INTEGER,"
                       "loser_elo INTEGER,"
+                      "replay_file TEXT,"
                       "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);";
 
     char* errMsg = 0;
@@ -46,55 +49,64 @@ void UserManager::initDatabase() {
         std::cerr << "SQL error: " << errMsg << std::endl;
         sqlite3_free(errMsg);
     }
+    
+    // Auto-migration for replay_file if it doesn't exist
+    // Simple way: Try to add it, ignore error
+    char* altMsg = 0;
+    sqlite3_exec(db, "ALTER TABLE match_history ADD COLUMN replay_file TEXT;", 0, 0, &altMsg);
+    if (altMsg) sqlite3_free(altMsg);
+    
+    // Auto-migration for elo changes
+    sqlite3_exec(db, "ALTER TABLE match_history ADD COLUMN winner_elo_change INTEGER DEFAULT 0;", 0, 0, 0);
+    sqlite3_exec(db, "ALTER TABLE match_history ADD COLUMN loser_elo_change INTEGER DEFAULT 0;", 0, 0, 0);
 }
+
 
 void UserManager::migrateFromFlatFile(const std::string& filepath) {
     std::ifstream file(filepath);
     if (!file.is_open()) return;
 
-    std::cout << "Migrating " << filepath << " to SQLite..." << std::endl;
-    
-    // Wrap in transaction for speed
-    char* errMsg = 0;
-    sqlite3_exec(db, "BEGIN TRANSACTION;", 0, 0, &errMsg);
-
     std::string line;
     while (std::getline(file, line)) {
         if (line.empty()) continue;
         std::stringstream ss(line);
-        std::string u, p;
+        std::string user, pass;
         int w, l, e;
-        if (ss >> u >> p >> w >> l >> e) {
-            std::string sql = "INSERT OR IGNORE INTO users (username, password, wins, losses, elo) VALUES (?, ?, ?, ?, ?);";
-            sqlite3_stmt* stmt;
-            sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
-            sqlite3_bind_text(stmt, 1, u.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt, 2, p.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_int(stmt, 3, w);
-            sqlite3_bind_int(stmt, 4, l);
-            sqlite3_bind_int(stmt, 5, e);
-            sqlite3_step(stmt);
-            sqlite3_finalize(stmt);
+        if (ss >> user >> pass >> w >> l >> e) {
+            // Check if exists
+            auto existing = getUser(user);
+            if (!existing) {
+                 registerUser(user, pass);
+                 // Update stats
+                 std::string sql = "UPDATE users SET wins = ?, losses = ?, elo = ? WHERE username = ?;";
+                 sqlite3_stmt* stmt;
+                 if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) == SQLITE_OK) {
+                     sqlite3_bind_int(stmt, 1, w);
+                     sqlite3_bind_int(stmt, 2, l);
+                     sqlite3_bind_int(stmt, 3, e);
+                     sqlite3_bind_text(stmt, 4, user.c_str(), -1, SQLITE_STATIC);
+                     sqlite3_step(stmt);
+                     sqlite3_finalize(stmt);
+                 }
+            }
         }
     }
-    sqlite3_exec(db, "COMMIT;", 0, 0, &errMsg);
     file.close();
-
-    // Rename file so we don't migrate again
-    std::string newName = filepath + ".bak";
-    rename(filepath.c_str(), newName.c_str());
-    std::cout << "Migration complete. Renamed to " << newName << std::endl;
+    // Rename/Delete to prevent re-migration? Or just leave it. getUser check prevents dupes.
 }
 
 bool UserManager::registerUser(const std::string& username, const std::string& password) {
-    std::string sql = "INSERT INTO users (username, password) VALUES (?, ?);";
+    if (getUser(username)) return false; // Already exists
+
+    std::string sql = "INSERT INTO users (username, password, wins, losses, elo) VALUES (?, ?, 0, 0, 1000);";
     sqlite3_stmt* stmt;
-    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) != SQLITE_OK) return false;
+    int rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0);
+    if (rc != SQLITE_OK) return false;
 
     sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
 
-    int rc = sqlite3_step(stmt);
+    rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return (rc == SQLITE_DONE);
 }
@@ -105,48 +117,46 @@ bool UserManager::loginUser(const std::string& username, const std::string& pass
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) != SQLITE_OK) return false;
 
     sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
-
-    bool result = false;
+    
+    bool valid = false;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         const char* dbPass = (const char*)sqlite3_column_text(stmt, 0);
-        if (dbPass && std::string(dbPass) == password) {
-            result = true;
+        if (dbPass && password == std::string(dbPass)) {
+            valid = true;
         }
     }
     sqlite3_finalize(stmt);
-    return result;
+    return valid;
 }
 
 std::optional<User> UserManager::getUser(const std::string& username) {
-    std::string sql = "SELECT wins, losses, elo, password FROM users WHERE username = ?;";
+    std::string sql = "SELECT username, password, wins, losses, elo FROM users WHERE username = ?;";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) != SQLITE_OK) return std::nullopt;
 
     sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
 
-    std::optional<User> user = std::nullopt;
+    std::optional<User> result = std::nullopt;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         User u;
-        u.username = username;
-        u.wins = sqlite3_column_int(stmt, 0);
-        u.losses = sqlite3_column_int(stmt, 1);
-        u.elo = sqlite3_column_int(stmt, 2);
-        const char* p = (const char*)sqlite3_column_text(stmt, 3);
-        u.password = p ? p : "";
-        user = u;
+        u.username = (const char*)sqlite3_column_text(stmt, 0);
+        u.password = (const char*)sqlite3_column_text(stmt, 1);
+        u.wins = sqlite3_column_int(stmt, 2);
+        u.losses = sqlite3_column_int(stmt, 3);
+        u.elo = sqlite3_column_int(stmt, 4);
+        result = u;
     }
     sqlite3_finalize(stmt);
-    return user;
+    return result;
 }
 
-std::pair<int, int> UserManager::recordMatch(const std::string& winnerName, const std::string& loserName) {
+std::pair<int, int> UserManager::recordMatch(const std::string& winnerName, const std::string& loserName, const std::string& replayFile) {
     auto winnerOpt = getUser(winnerName);
     auto loserOpt = getUser(loserName);
 
-    if (!winnerOpt || !loserOpt) return {0, 0};
-
-    User winner = *winnerOpt;
-    User loser = *loserOpt;
+    // Create dummy users if not found (e.g. AI)
+    User winner = winnerOpt.value_or(User{winnerName, "", 0, 0, 1000});
+    User loser = loserOpt.value_or(User{loserName, "", 0, 0, 1000});
 
     // Elo Config
     double Ra = (double)winner.elo;
@@ -168,45 +178,93 @@ std::pair<int, int> UserManager::recordMatch(const std::string& winnerName, cons
 
     std::string updateSql = "UPDATE users SET wins = ?, losses = ?, elo = ? WHERE username = ?;";
     
-    // Update Winner
-    sqlite3_stmt* stmtW;
-    sqlite3_prepare_v2(db, updateSql.c_str(), -1, &stmtW, 0);
-    sqlite3_bind_int(stmtW, 1, winner.wins);
-    sqlite3_bind_int(stmtW, 2, winner.losses);
-    sqlite3_bind_int(stmtW, 3, winner.elo);
-    sqlite3_bind_text(stmtW, 4, winner.username.c_str(), -1, SQLITE_STATIC);
-    sqlite3_step(stmtW);
-    sqlite3_finalize(stmtW);
+    // Update Winner if they exist
+    if (winnerOpt) {
+        sqlite3_stmt* stmtW;
+        sqlite3_prepare_v2(db, updateSql.c_str(), -1, &stmtW, 0);
+        sqlite3_bind_int(stmtW, 1, winner.wins);
+        sqlite3_bind_int(stmtW, 2, winner.losses);
+        sqlite3_bind_int(stmtW, 3, winner.elo);
+        sqlite3_bind_text(stmtW, 4, winner.username.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmtW);
+        sqlite3_finalize(stmtW);
+    }
 
-    // Update Loser
-    sqlite3_stmt* stmtL;
-    sqlite3_prepare_v2(db, updateSql.c_str(), -1, &stmtL, 0);
-    sqlite3_bind_int(stmtL, 1, loser.wins);
-    sqlite3_bind_int(stmtL, 2, loser.losses);
-    sqlite3_bind_int(stmtL, 3, loser.elo);
-    sqlite3_bind_text(stmtL, 4, loser.username.c_str(), -1, SQLITE_STATIC);
-    sqlite3_step(stmtL);
-    sqlite3_finalize(stmtL);
+    // Update Loser if they exist
+    if (loserOpt) {
+        sqlite3_stmt* stmtL;
+        sqlite3_prepare_v2(db, updateSql.c_str(), -1, &stmtL, 0);
+        sqlite3_bind_int(stmtL, 1, loser.wins);
+        sqlite3_bind_int(stmtL, 2, loser.losses);
+        sqlite3_bind_int(stmtL, 3, loser.elo);
+        sqlite3_bind_text(stmtL, 4, loser.username.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmtL);
+        sqlite3_finalize(stmtL);
+    }
 
     sqlite3_exec(db, "COMMIT;", 0, 0, &errMsg);
 
-    logMatch(winnerName, loserName, winner.elo, loser.elo);
+    logMatch(winnerName, loserName, winnerDelta, loserDelta, replayFile);
+    
     std::cout << "Match Recorded (DB): " << winnerName << " (+" << winnerDelta << ") vs " << loserName << " (" << loserDelta << ")" << std::endl;
     
     return {winnerDelta, loserDelta};
 }
 
-void UserManager::logMatch(const std::string& winner, const std::string& loser, int winnerElo, int loserElo) {
-    std::string sql = "INSERT INTO match_history (winner, loser, winner_elo, loser_elo) VALUES (?, ?, ?, ?);";
+void UserManager::logMatch(const std::string& winner, const std::string& loser, int winnerDelta, int loserDelta, const std::string& replayFile) {
+    std::string sql = "INSERT INTO match_history (winner, loser, winner_elo_change, loser_elo_change, replay_file) VALUES (?, ?, ?, ?, ?);";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, winner.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 2, loser.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_int(stmt, 3, winnerElo);
-        sqlite3_bind_int(stmt, 4, loserElo);
+        sqlite3_bind_int(stmt, 3, winnerDelta);
+        sqlite3_bind_int(stmt, 4, loserDelta);
+        sqlite3_bind_text(stmt, 5, replayFile.c_str(), -1, SQLITE_STATIC);
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }
+}
+
+std::vector<HistoryEntry> UserManager::getHistory(const std::string& username) {
+    std::vector<HistoryEntry> history;
+    // Query where user is winner OR loser
+    std::string sql = "SELECT timestamp, winner, loser, winner_elo_change, loser_elo_change, replay_file FROM match_history WHERE winner = ? OR loser = ? ORDER BY id DESC LIMIT 20;";
+    
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) != SQLITE_OK) return history;
+    
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, username.c_str(), -1, SQLITE_STATIC);
+    
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        HistoryEntry entry;
+        const char* ts = (const char*)sqlite3_column_text(stmt, 0);
+        const char* w = (const char*)sqlite3_column_text(stmt, 1);
+        const char* l = (const char*)sqlite3_column_text(stmt, 2);
+        int wDelta = sqlite3_column_int(stmt, 3);
+        int lDelta = sqlite3_column_int(stmt, 4);
+        const char* rf = (const char*)sqlite3_column_text(stmt, 5);
+        
+        strncpy(entry.timestamp, ts ? ts : "", 32);
+        if (rf) strncpy(entry.replayFile, rf, 64);
+        else memset(entry.replayFile, 0, 64);
+        
+        std::string winner(w);
+        std::string loser(l);
+        
+        if (username == winner) {
+            strncpy(entry.opponent, loser.c_str(), 32);
+            strncpy(entry.result, "WIN", 8);
+            entry.eloChange = wDelta;
+        } else {
+            strncpy(entry.opponent, winner.c_str(), 32);
+            strncpy(entry.result, "LOSS", 8);
+            entry.eloChange = lDelta;
+        }
+        history.push_back(entry);
+    }
+    sqlite3_finalize(stmt);
+    return history;
 }
 
 std::string UserManager::getLeaderboard() {

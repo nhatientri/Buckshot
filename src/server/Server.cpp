@@ -60,7 +60,11 @@ void Server::run() {
                       std::string p2n = game->getP2Name();
                       std::string loser = (winner == p1n) ? p2n : p1n;
                       
-                      auto deltas = userManager.recordMatch(winner, loser);
+
+                      
+                      std::string replayFile = ReplayManager::saveReplay(p1n, p2n, winner, game->getHistory());
+                      auto deltas = userManager.recordMatch(winner, loser, replayFile);
+
                       int p1Delta = (winner == p1n) ? deltas.first : deltas.second;
                       int p2Delta = (winner == p2n) ? deltas.first : deltas.second;
                       game->setEloChanges(p1Delta, p2Delta);
@@ -71,8 +75,6 @@ void Server::run() {
                       send(game->getP1Fd(), &state, sizeof(state), 0);
                       send(game->getP2Fd(), &stateHead, sizeof(stateHead), 0);
                       send(game->getP2Fd(), &state, sizeof(state), 0);
-                      
-                      ReplayManager::saveReplay(p1n, p2n, winner, game->getHistory());
 
                      it = activeGames.erase(it);
                  } else {
@@ -104,8 +106,11 @@ void Server::run() {
                      std::string loser = (winner == p1n) ? p2n : p1n;
                      
                      // Handle AI game record? userManager might return 0 for "The Dealer"
-                     userManager.recordMatch(winner, loser);
-                     ReplayManager::saveReplay(p1n, p2n, winner, game->getHistory());
+
+                      
+                      // Handle AI game record? userManager might return 0 for "The Dealer"
+                      std::string replayFile = ReplayManager::saveReplay(p1n, p2n, winner, game->getHistory());
+                      userManager.recordMatch(winner, loser, replayFile);
                      
                      it = activeGames.erase(it);
                      continue;
@@ -212,8 +217,10 @@ void Server::handleClientActivity(fd_set& readfds) {
                         std::string p2n = game->getP2Name();
                         std::string loser = (winner == p1n) ? p2n : p1n;
                         
-                        userManager.recordMatch(winner, loser);
-                        ReplayManager::saveReplay(p1n, p2n, winner, game->getHistory());
+
+                        
+                        std::string replayFile = ReplayManager::saveReplay(p1n, p2n, winner, game->getHistory());
+                        userManager.recordMatch(winner, loser, replayFile);
                         
                         auto gIt = std::find(activeGames.begin(), activeGames.end(), game);
                         if (gIt != activeGames.end()) {
@@ -477,6 +484,18 @@ void Server::handleClientActivity(fd_set& readfds) {
                             send(sd, &resp, sizeof(resp), 0);
                             if (resp.size > 0) send(sd, history.data(), resp.size, 0);
                         }
+
+                    } else if (header.command == CMD_GET_HISTORY) {
+                         std::string user = authenticatedUsers[sd];
+                         std::vector<HistoryEntry> history = userManager.getHistory(user);
+                         
+                         PacketHeader resp;
+                         resp.command = CMD_HISTORY_DATA;
+                         resp.size = history.size() * sizeof(HistoryEntry);
+                         send(sd, &resp, sizeof(resp), 0);
+                         if (resp.size > 0) {
+                             send(sd, history.data(), resp.size, 0);
+                         }
                     } else if (header.command == CMD_RESIGN) {
                          auto game = getGameSession(sd);
                          if (game) {
@@ -501,8 +520,10 @@ void Server::handleClientActivity(fd_set& readfds) {
                                  std::string p2 = game->getP2Name();
                                  std::string loser = (winner == p1) ? p2 : p1;
                                  
-                                 userManager.recordMatch(winner, loser);
-                                 ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+
+                                 
+                                 std::string replayFile = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+                                 userManager.recordMatch(winner, loser, replayFile);
 
                                   auto it = std::find(activeGames.begin(), activeGames.end(), game);
                                   if (it != activeGames.end()) {
@@ -536,20 +557,15 @@ void Server::handleClientActivity(fd_set& readfds) {
                                     std::string p2 = game->getP2Name();
                                     std::string loser = (winner == p1) ? p2 : p1;
                                     
-                                    auto deltas = userManager.recordMatch(winner, loser);
+
+                                    
+                                    // SAVE REPLAY
+                                    std::string replayFile = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+
+                                    auto deltas = userManager.recordMatch(winner, loser, replayFile);
                                     int p1Delta = (winner == p1) ? deltas.first : deltas.second;
                                     int p2Delta = (winner == p2) ? deltas.first : deltas.second;
                                     game->setEloChanges(p1Delta, p2Delta);
-                                    
-                                    // Re-broadcast
-                                    GameStatePacket state = game->getState();
-                                    send(game->getP1Fd(), &stateHead, sizeof(stateHead), 0);
-                                    send(game->getP1Fd(), &state, sizeof(state), 0);
-                                    send(game->getP2Fd(), &stateHead, sizeof(stateHead), 0);
-                                    send(game->getP2Fd(), &state, sizeof(state), 0);
-                                    
-                                    // SAVE REPLAY
-                                    ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
 
                                     // Remove game from active list? 
                                     // For now, let's just keep it (memory leak in long run but okay for demo) 

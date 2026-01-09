@@ -383,6 +383,7 @@ int main(int argc, char** argv) {
     // Replay State
     bool showReplayBrowser = false;
     bool showReplayViewer = false;
+    bool showHistory = false;
     int replayIndex = 0;
     
     std::string currentStatusMsg = "";
@@ -490,6 +491,13 @@ int main(int argc, char** argv) {
             // MENU BAR
             if (ImGui::BeginMainMenuBar()) {
                 if (ImGui::BeginMenu("Game")) {
+                    if (ImGui::MenuItem("Return to Lobby")) {
+                        showHistory = false;
+                        showReplayBrowser = false;
+                        showReplayViewer = false;
+                        showLeaderboard = false;
+                        showRules = false;
+                    }
                     if (ImGui::MenuItem("Exit")) done = true;
                     ImGui::EndMenu();
                 }
@@ -501,6 +509,13 @@ int main(int argc, char** argv) {
                     if (ImGui::MenuItem("Replays")) {
                         client.requestReplayList();
                         showReplayBrowser = true;
+                        showReplayViewer = false;
+                        showHistory = false;
+                    }
+                    if (ImGui::MenuItem("Game History")) {
+                        client.requestHistory();
+                        showHistory = true;
+                        showReplayBrowser = false;
                         showReplayViewer = false;
                     }
                     ImGui::EndMenu();
@@ -524,6 +539,52 @@ int main(int argc, char** argv) {
                 std::string board = client.getLeaderboardData();
                 ImGui::TextUnformatted(board.c_str());
                 if (PlaySoundButton("Refresh")) client.getLeaderboard();
+                ImGui::End();
+            }
+            
+            // HISTORY WINDOW
+            if (showHistory) {
+                ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
+                ImGui::Begin("Game History", &showHistory);
+                if (PlaySoundButton("Refresh")) client.requestHistory();
+                ImGui::Separator();
+                
+                ImGui::Columns(4, "history_cols"); 
+                ImGui::Separator();
+                ImGui::Text("Date"); ImGui::NextColumn();
+                ImGui::Text("Opponent"); ImGui::NextColumn();
+                ImGui::Text("Result (Elo)"); ImGui::NextColumn();
+                ImGui::Text("Action"); ImGui::NextColumn();
+                ImGui::Separator();
+                
+                auto history = client.getHistory();
+                for (const auto& entry : history) {
+                    ImGui::Text("%s", entry.timestamp); ImGui::NextColumn();
+                    ImGui::Text("%s", entry.opponent); ImGui::NextColumn();
+                    
+                    std::string res(entry.result);
+                    if (res == "WIN") ImGui::TextColored(ImVec4(0,1,0,1), "WIN (%+d)", entry.eloChange);
+                    else ImGui::TextColored(ImVec4(1,0,0,1), "LOSS (%+d)", entry.eloChange);
+                    ImGui::NextColumn();
+                    
+                    if (entry.replayFile[0] != '\0') {
+                        std::string label = "Watch##" + std::string(entry.timestamp);
+                        if (PlaySoundButton(label.c_str())) {
+                            client.requestReplayDownload(entry.replayFile);
+                        }
+                    } else {
+                        ImGui::TextDisabled("No Replay");
+                    }
+                    ImGui::NextColumn();
+                }
+                ImGui::Columns(1);
+                
+                if (client.hasReplayData()) {
+                    showHistory = false;
+                    showReplayViewer = true;
+                    replayIndex = 0;
+                }
+                
                 ImGui::End();
             }
             
@@ -555,6 +616,11 @@ int main(int argc, char** argv) {
                      ImGui::Text("Error: No Replay Data");
                      if (PlaySoundButton("Close")) showReplayViewer = false;
                  } else {
+                     // Show Game Board (Render FIRST so Controls are on TOP)
+                     if (replayIndex >= 0 && replayIndex < data.size()) {
+                         ShowGameScreen(data[replayIndex], client, true);
+                     }
+
                      // Playback Controls
                      ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - 60));
                      ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, 60));
@@ -569,11 +635,6 @@ int main(int argc, char** argv) {
                      if (PlaySoundButton("Exit Replay")) showReplayViewer = false;
                      
                      ImGui::End();
-                     
-                     // Show Game Board
-                     if (replayIndex >= 0 && replayIndex < data.size()) {
-                         ShowGameScreen(data[replayIndex], client, true);
-                     }
                  }
             }
 
@@ -604,9 +665,12 @@ int main(int argc, char** argv) {
                     }
 
                     ImGui::SameLine();
-                    if (PlaySoundButton("Watch Replays")) {
-                        client.requestReplayList();
-                        showReplayBrowser = true;
+                    ImGui::SameLine();
+                    if (PlaySoundButton("View History")) {
+                        client.requestHistory();
+                        showHistory = true;
+                        showReplayBrowser = false;
+                        showReplayViewer = false;
                     }
                     
                     ImGui::Separator();
