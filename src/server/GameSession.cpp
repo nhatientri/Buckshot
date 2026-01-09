@@ -46,6 +46,9 @@ void GameSession::loadShells() {
     
     distributeItems();
     aiKnownShellState = AI_UNKNOWN; // Reset memory on reload
+    
+    // Record state immediately so Replay sees the new items/shells BEFORE any move consumes them
+    history.push_back(getState());
 }
 
 void GameSession::distributeItems() {
