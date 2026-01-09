@@ -57,6 +57,14 @@ enum Command : uint8_t {
     CMD_GET_HISTORY    = 80,
     CMD_HISTORY_DATA   = 81,
 
+    // Friends
+    CMD_FRIEND_ADD     = 90,
+    CMD_FRIEND_LIST    = 91,
+    CMD_FRIEND_LIST_RESP = 92,
+    CMD_FRIEND_REQ_INCOMING = 93,
+    CMD_FRIEND_ACCEPT  = 94,
+    CMD_FRIEND_REMOVE  = 95,
+
     CMD_ERROR = 99
 };
 

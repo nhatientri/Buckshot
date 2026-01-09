@@ -376,8 +376,10 @@ int main(int argc, char** argv) {
     // State
     char usernameBuf[32] = "";
     char passwordBuf[32] = "";
+    char addFriendBuf[32] = "";
     bool showLeaderboard = false;
     bool showRules = false;
+    bool showFriends = false;
     bool searchingMatch = false;
     
     // Replay State
@@ -497,6 +499,7 @@ int main(int argc, char** argv) {
                         showReplayViewer = false;
                         showLeaderboard = false;
                         showRules = false;
+                        showFriends = false;
                     }
                     if (ImGui::MenuItem("Exit")) done = true;
                     ImGui::EndMenu();
@@ -586,7 +589,94 @@ int main(int argc, char** argv) {
                 }
                 
                 ImGui::End();
+                ImGui::End();
             }
+
+            // FRIENDS WINDOW
+            if (showFriends) {
+                ImGui::Begin("Friends List", &showFriends);
+                
+                // Add Friend
+                ImGui::InputText("Username##add", addFriendBuf, 32);
+                ImGui::SameLine();
+                if (PlaySoundButton("Add Friend")) {
+                    if (strlen(addFriendBuf) > 0) {
+                        client.sendAddFriend(addFriendBuf);
+                        addFriendBuf[0] = '\0';
+                    }
+                }
+                ImGui::Separator();
+                
+                if (PlaySoundButton("Refresh List")) client.requestFriendList();
+                
+
+                
+                // Friends List
+                auto friends = client.getFriendList();
+                // Format "Name:Status"
+                if (friends.empty()) ImGui::TextDisabled("No friends yet.");
+                else {
+                    for(const auto& f : friends) {
+                        // Parse
+                        size_t colon = f.find(':');
+                        if (colon != std::string::npos) {
+                            std::string name = f.substr(0, colon);
+                            std::string status = f.substr(colon+1);
+                            
+                            ImGui::Text("%s", name.c_str());
+                            ImGui::SameLine(150);
+                            
+                            ImVec4 color = ImVec4(0.7,0.7,0.7,1);
+                            if (status == "ACCEPTED" || status == "ONLINE") color = ImVec4(0,1,0,1);
+                            else if (status == "OFFLINE") color = ImVec4(1,0,0,1); // Red
+                            else if (status == "PENDING") color = ImVec4(1,1,0,1);
+                            else if (status == "SENT") color = ImVec4(0,1,1,1);
+                            
+                            ImGui::TextColored(color, "[%s]", status.c_str());
+                            
+                            // Actions based on status
+                            if (status == "ACCEPTED" || status == "ONLINE" || status == "OFFLINE") {
+                                // Challenge only if ONLINE? Or allow regardless and let server handle errors?
+                                // User asked for status display, but implied functionality remains.
+                                // If ONLINE, show Challenge.
+                                if (status == "ONLINE") {
+                                    ImGui::SameLine();
+                                    std::string btnId = "Challenge##" + name;
+                                    if (PlaySoundButton(btnId.c_str())) {
+                                        client.sendChallenge(name);
+                                    }
+                                }
+                            } else if (status == "PENDING") {
+                                // Incoming request
+                                ImGui::SameLine();
+                                if (PlaySoundButton(("Accept##" + name).c_str())) {
+                                    client.sendAcceptFriend(name);
+                                    client.requestFriendList();
+                                }
+                            } else if (status == "SENT") {
+                                // Outgoing request - Cancel?
+                                // Reuse RemoveFriend to cancel
+                                ImGui::SameLine();
+                                if (PlaySoundButton(("Cancel##" + name).c_str())) {
+                                    client.sendRemoveFriend(name);
+                                    client.requestFriendList();
+                                }
+                            }
+                            
+                            // Remove Friend
+                            ImGui::SameLine(350);
+                            std::string delBtn = "Remove##" + name;
+                            if (PlaySoundButton(delBtn.c_str())) {
+                                client.sendRemoveFriend(name);
+                                client.requestFriendList(); // Refresh
+                            }
+                        }
+                    }
+                }
+
+                ImGui::End();
+            }
+            
             
             // REPLAY BROWSER
             if (showReplayBrowser) {
@@ -666,12 +756,24 @@ int main(int argc, char** argv) {
 
                     ImGui::SameLine();
                     ImGui::SameLine();
+                    ImGui::SameLine();
+                    ImGui::SameLine();
                     if (PlaySoundButton("View History")) {
                         client.requestHistory();
                         showHistory = true;
                         showReplayBrowser = false;
                         showReplayViewer = false;
+                        showFriends = false;
                     }
+                    ImGui::SameLine();
+                    if (PlaySoundButton("Friends")) {
+                        client.requestFriendList();
+                        showFriends = true;
+                        showHistory = false;
+                        showReplayBrowser = false;
+                        showReplayViewer = false;
+                    }
+
                     
                     ImGui::Separator();
                     ImGui::Text("Online Users:");

@@ -41,7 +41,13 @@ void UserManager::initDatabase() {
                       "winner_elo INTEGER,"
                       "loser_elo INTEGER,"
                       "replay_file TEXT,"
-                      "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);";
+                      "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);"
+                      "CREATE TABLE IF NOT EXISTS friends ("
+                      "requester TEXT,"
+                      "target TEXT,"
+                      "status TEXT,"
+                      "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                      "UNIQUE(requester, target));";
 
     char* errMsg = 0;
     rc = sqlite3_exec(db, sql, 0, 0, &errMsg);
@@ -286,6 +292,113 @@ std::string UserManager::getLeaderboard() {
     }
     sqlite3_finalize(stmt);
     return ss.str();
+}
+
+bool UserManager::addFriendRequest(const std::string& user, const std::string& friendName) {
+    // 1. Check if user exists
+    if (!getUser(friendName)) return false; 
+    if (user == friendName) return false;
+
+    // 2. Check overlap
+    // If (user, friend) exists -> fail (already requested)
+    // If (friend, user) exists AND pending -> Auto Accept? Or fail and say "They already invited you"
+    
+    // Simplest: Check if ANY relationship exists
+    std::string checkSql = "SELECT status FROM friends WHERE (requester=? AND target=?) OR (requester=? AND target=?);";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, checkSql.c_str(), -1, &stmt, 0) != SQLITE_OK) return false;
+    
+    sqlite3_bind_text(stmt, 1, user.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, friendName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, friendName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, user.c_str(), -1, SQLITE_STATIC);
+    
+    bool exists = (sqlite3_step(stmt) == SQLITE_ROW);
+    sqlite3_finalize(stmt);
+    
+    if (exists) return false; // Already related
+
+    // 3. Insert PENDING
+    std::string sql = "INSERT INTO friends (requester, target, status) VALUES (?, ?, 'PENDING');";
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) != SQLITE_OK) return false;
+    
+    sqlite3_bind_text(stmt, 1, user.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, friendName.c_str(), -1, SQLITE_STATIC);
+    
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE);
+}
+
+bool UserManager::acceptFriendRequest(const std::string& user, const std::string& friendName) {
+    // User is accepting a request FROM friendName
+    std::string sql = "UPDATE friends SET status='ACCEPTED' WHERE requester=? AND target=? AND status='PENDING';";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) != SQLITE_OK) return false;
+    
+    sqlite3_bind_text(stmt, 1, friendName.c_str(), -1, SQLITE_STATIC); // Friend is requester
+    sqlite3_bind_text(stmt, 2, user.c_str(), -1, SQLITE_STATIC);       // User is target
+    
+    int rc = sqlite3_step(stmt);
+    int changed = sqlite3_changes(db);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE && changed > 0);
+}
+
+bool UserManager::removeFriend(const std::string& user, const std::string& friendName) {
+    std::string sql = "DELETE FROM friends WHERE (requester=? AND target=?) OR (requester=? AND target=?);";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) != SQLITE_OK) return false;
+    
+    sqlite3_bind_text(stmt, 1, user.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, friendName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, friendName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, user.c_str(), -1, SQLITE_STATIC);
+    
+    int rc = sqlite3_step(stmt);
+    int changed = sqlite3_changes(db);
+    sqlite3_finalize(stmt);
+    
+    return (rc == SQLITE_DONE && changed > 0);
+}
+
+std::string UserManager::getFriendList(const std::string& user) {
+    std::string list;
+    
+    // Find all relationships
+    std::string sql = "SELECT requester, target, status FROM friends WHERE requester=? OR target=?;";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, 0) != SQLITE_OK) return "";
+    
+    sqlite3_bind_text(stmt, 1, user.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, user.c_str(), -1, SQLITE_STATIC);
+    
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        std::string r = (const char*)sqlite3_column_text(stmt, 0);
+        std::string t = (const char*)sqlite3_column_text(stmt, 1);
+        std::string s = (const char*)sqlite3_column_text(stmt, 2);
+        
+        std::string other = (r == user) ? t : r;
+        
+        // Format: "FriendName:STATUS"
+        // But for UI, we might want to know if WE sent it or THEY sent it (for Pending)
+        // If s == ACCEPTED -> "FriendName:ACCEPTED"
+        // If s == PENDING:
+        //    If r == user (We sent) -> "FriendName:SENT"
+        //    If t == user (They sent) -> "FriendName:PENDING"
+        
+        std::string statusStr = s;
+        if (s == "PENDING") {
+            if (r == user) statusStr = "SENT";
+            else statusStr = "PENDING"; // Incoming
+        }
+        
+        if (!list.empty()) list += ",";
+        list += other + ":" + statusStr;
+    }
+    sqlite3_finalize(stmt);
+    return list;
 }
 
 }

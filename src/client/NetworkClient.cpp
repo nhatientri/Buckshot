@@ -157,6 +157,28 @@ void NetworkClient::processPacket(const PacketHeader& header, const std::vector<
             for(int i=0; i<count; ++i) history.push_back(entries[i]);
         }
         // lastStatusMessage = "History Updated"; // Removed to prevent popup blocking UI
+    } else if (header.command == CMD_FRIEND_LIST_RESP) {
+        std::string s(body.begin(), body.end());
+        friendList.clear();
+        std::stringstream ss(s);
+        std::string entry;
+        while (std::getline(ss, entry, ',')) { // Comma separated? Or newline? Server code used comma for list?
+            // "list += other + ":" + statusStr;" and "list += ","" so it uses comma separator
+            if (!entry.empty()) friendList.push_back(entry);
+        }
+    } else if (header.command == CMD_FRIEND_REQ_INCOMING) {
+        if (body.size() >= sizeof(ChallengePacket)) {
+            ChallengePacket* pkt = (ChallengePacket*)body.data();
+            std::string sender(pkt->targetUser);
+            // Check dupes
+            bool found = false;
+            for(const auto& r : incomingFriendRequests) if (r == sender) found = true;
+            if (!found) {
+                incomingFriendRequests.push_back(sender);
+                lastStatusMessage = "Friend Request from " + sender;
+                requestFriendList(); // Auto refresh
+            }
+        }
     }
 }
 
@@ -339,6 +361,56 @@ std::vector<HistoryEntry> NetworkClient::getHistory() {
 void NetworkClient::sendTogglePause() {
     PacketHeader header = {0, CMD_TOGGLE_PAUSE};
     send(socketFd, &header, sizeof(header), 0);
+}
+
+// Friends
+void NetworkClient::requestFriendList() {
+    PacketHeader header = {0, CMD_FRIEND_LIST};
+    send(socketFd, &header, sizeof(header), 0);
+}
+
+void NetworkClient::sendAddFriend(const std::string& friendName) {
+    ChallengePacket pkt;
+    strncpy(pkt.targetUser, friendName.c_str(), 32);
+    PacketHeader header = {(uint32_t)sizeof(pkt), CMD_FRIEND_ADD};
+    send(socketFd, &header, sizeof(header), 0);
+    send(socketFd, &pkt, sizeof(pkt), 0);
+}
+
+void NetworkClient::sendAcceptFriend(const std::string& friendName) {
+    ChallengePacket pkt;
+    strncpy(pkt.targetUser, friendName.c_str(), 32);
+    PacketHeader header = {(uint32_t)sizeof(pkt), CMD_FRIEND_ACCEPT};
+    send(socketFd, &header, sizeof(header), 0);
+    send(socketFd, &pkt, sizeof(pkt), 0);
+    
+    // Remove from pending
+    std::lock_guard<std::mutex> lock(dataMutex);
+    auto it = std::find(incomingFriendRequests.begin(), incomingFriendRequests.end(), friendName);
+    if (it != incomingFriendRequests.end()) incomingFriendRequests.erase(it);
+}
+
+void NetworkClient::sendRemoveFriend(const std::string& friendName) {
+    ChallengePacket pkt;
+    strncpy(pkt.targetUser, friendName.c_str(), 32);
+    PacketHeader header = {(uint32_t)sizeof(pkt), CMD_FRIEND_REMOVE};
+    send(socketFd, &header, sizeof(header), 0);
+    send(socketFd, &pkt, sizeof(pkt), 0);
+}
+
+std::vector<std::string> NetworkClient::getFriendList() {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    return friendList;
+}
+
+std::vector<std::string> NetworkClient::getIncomingFriendRequests() {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    return incomingFriendRequests;
+}
+
+void NetworkClient::clearIncomingFriendRequests() {
+    std::lock_guard<std::mutex> lock(dataMutex);
+    incomingFriendRequests.clear();
 }
 
 }

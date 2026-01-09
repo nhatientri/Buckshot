@@ -68,6 +68,18 @@ public:
     // History
     void requestHistory();
     std::vector<HistoryEntry> getHistory();
+
+    // Friends
+    void requestFriendList();
+    void sendAddFriend(const std::string& friendName);
+    void sendAcceptFriend(const std::string& friendName);
+    void sendRemoveFriend(const std::string& friendName);
+    
+    // Returns parsed "Name:Status" strings
+    std::vector<std::string> getFriendList();
+    // Returns pending friend request names (incoming)
+    std::vector<std::string> getIncomingFriendRequests();
+    void clearIncomingFriendRequests();
     
     // Status flags used by UI to show popups/errors
     std::atomic<bool> loginSuccess;
@@ -94,6 +106,8 @@ private:
     std::vector<std::string> replayList;
     std::vector<GameStatePacket> currentReplay;
     std::vector<HistoryEntry> history;
+    std::vector<std::string> friendList; 
+    std::vector<std::string> incomingFriendRequests; // Just names
     bool replayReady;
     
     std::string lastOpponent;

@@ -6,7 +6,7 @@
 #include <fcntl.h>
 #include <cstring>
 #include <algorithm>
-#include "../common/Protocol.h"
+#include <sstream>
 #include "../common/Protocol.h"
 #include "ReplayManager.h"
 #include <chrono>
@@ -619,6 +619,80 @@ void Server::handleClientActivity(fd_set& readfds) {
                              send(sd, &stateHead, sizeof(stateHead), 0);
                              send(sd, &state, sizeof(state), 0);
                          }
+                    } else if (header.command == CMD_FRIEND_ADD) {
+                        if (header.size == sizeof(ChallengePacket)) {
+                            ChallengePacket* pkt = (ChallengePacket*)body.data();
+                            std::string target(pkt->targetUser);
+                            std::string user = authenticatedUsers[sd];
+                            bool ok = userManager.addFriendRequest(user, target);
+                            if (ok) {
+                                 int targetFd = -1;
+                                 for (const auto& pair : authenticatedUsers) {
+                                     if (pair.second == target) {
+                                         targetFd = pair.first;
+                                         break;
+                                     }
+                                 }
+                                 if (targetFd != -1) {
+                                     ChallengePacket reqPkt;
+                                     strncpy(reqPkt.targetUser, user.c_str(), 32); 
+                                     PacketHeader h = {(uint32_t)sizeof(ChallengePacket), CMD_FRIEND_REQ_INCOMING};
+                                     send(targetFd, &h, sizeof(h), 0);
+                                     send(targetFd, &reqPkt, sizeof(reqPkt), 0);
+                                 }
+                            }
+                        }
+                    } else if (header.command == CMD_FRIEND_ACCEPT) {
+                        if (header.size == sizeof(ChallengePacket)) {
+                            ChallengePacket* pkt = (ChallengePacket*)body.data();
+                            std::string target(pkt->targetUser); 
+                            std::string user = authenticatedUsers[sd];
+                            userManager.acceptFriendRequest(user, target);
+                        }
+                    } else if (header.command == CMD_FRIEND_REMOVE) {
+                        if (header.size == sizeof(ChallengePacket)) {
+                            ChallengePacket* pkt = (ChallengePacket*)body.data();
+                            std::string target(pkt->targetUser);
+                            std::string user = authenticatedUsers[sd];
+                            userManager.removeFriend(user, target);
+                        }
+                    } else if (header.command == CMD_FRIEND_LIST) {
+                        std::string user = authenticatedUsers[sd];
+                        std::string rawList = userManager.getFriendList(user);
+                        
+                        // Parse and inject Online status
+                        std::string finalList;
+                        std::stringstream ss(rawList);
+                        std::string item;
+                        while (std::getline(ss, item, ',')) {
+                            if (item.empty()) continue;
+                            size_t colon = item.find(':');
+                            if (colon != std::string::npos) {
+                                std::string fName = item.substr(0, colon);
+                                std::string status = item.substr(colon+1);
+                                
+                                if (status == "ACCEPTED") {
+                                    // Check if online
+                                    bool isOnline = false;
+                                    for(const auto& pair : authenticatedUsers) {
+                                        if (pair.second == fName) {
+                                            isOnline = true;
+                                            break;
+                                        }
+                                    }
+                                    status = isOnline ? "ONLINE" : "OFFLINE";
+                                }
+                                
+                                if (!finalList.empty()) finalList += ",";
+                                finalList += fName + ":" + status;
+                            }
+                        }
+                        
+                        PacketHeader resp;
+                        resp.command = CMD_FRIEND_LIST_RESP;
+                        resp.size = finalList.size();
+                        send(sd, &resp, sizeof(resp), 0);
+                        if (finalList.size() > 0) send(sd, finalList.c_str(), finalList.size(), 0);
                     }
                 }
             } else {

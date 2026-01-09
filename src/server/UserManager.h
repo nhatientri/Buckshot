@@ -29,6 +29,12 @@ public:
     std::vector<HistoryEntry> getHistory(const std::string& username);
     std::string getLeaderboard();
 
+    // Friends
+    bool addFriendRequest(const std::string& user, const std::string& friendName);
+    bool acceptFriendRequest(const std::string& user, const std::string& friendName);
+    bool removeFriend(const std::string& user, const std::string& friendName);
+    std::string getFriendList(const std::string& user); // Returns serialized list "friend1:STATUS,friend2:STATUS"
+
     // Migration
     void migrateFromFlatFile(const std::string& filepath);
 
