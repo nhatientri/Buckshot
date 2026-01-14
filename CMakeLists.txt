@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find SDL2 for Client
 # Common files
-include_directories(src/common)
+include_directories(src/common src/vendor/asio)
 file(GLOB COMMON_SOURCES "src/common/*.cpp")
 
 # Find SDL2

@@ -1,4 +1,5 @@
-#pragma once
+#define ASIO_STANDALONE
+#include <asio.hpp>
 #include <vector>
 #include <string>
 #include <map>
@@ -16,27 +17,38 @@ public:
 
 private:
     int port;
-    int serverSocket;
     bool running;
-    std::vector<int> clientSockets;
+    
+    // Asio
+    asio::io_context io_context;
+    asio::ip::tcp::acceptor acceptor;
+    asio::steady_timer gameloop_timer;
+    std::vector<std::shared_ptr<asio::ip::tcp::socket>> clients;
+
     UserManager userManager;
     
     // session state
-    std::map<int, std::string> authenticatedUsers; // fd -> username
+    // We will use the raw socket pointer address as a unique ID for now, or maintain a map
+    // For simplicity in migration, let's map shared_ptr<socket> to user data
+    std::map<std::shared_ptr<asio::ip::tcp::socket>, std::string> authenticatedUsers; 
     std::vector<std::shared_ptr<GameSession>> activeGames;
     std::chrono::steady_clock::time_point lastTimeoutCheck;
 
-    void setupSocket();
-    void handleNewConnection();
-    void handleClientActivity(fd_set& readfds);
-    void broadcastUserList();
-    void processPacket(int clientFd, const char* buffer, int size);
+    void doAccept();
+    void doRead(std::shared_ptr<asio::ip::tcp::socket> socket);
+    void startGameloop();
     
-    std::shared_ptr<GameSession> getGameSession(int fd);
+    void broadcastUserList();
+    void processPacket(std::shared_ptr<asio::ip::tcp::socket> client, PacketHeader& header, const std::vector<char>& body);
+    
+    std::shared_ptr<GameSession> getGameSession(std::shared_ptr<asio::ip::tcp::socket> client);
     
     std::map<std::string, std::string> pendingChallenges; // Challenger -> Target
-    std::vector<std::string> matchmakingQueue; // Users waiting for match
+    std::vector<std::string> matchmakingQueue; // Users waiting for match (Username)
     void processMatchmaking();
+    
+    // Helper to find socket by username
+    std::shared_ptr<asio::ip::tcp::socket> getSocketByUsername(const std::string& username);
 };
 
 }

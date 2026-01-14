@@ -6,8 +6,8 @@
 
 namespace Buckshot {
 
-GameSession::GameSession(const std::string& p1, const std::string& p2, int fd1, int fd2)
-    : p1Name(p1), p2Name(p2), p1Fd(fd1), p2Fd(fd2), hp1(5), hp2(5), gameOver(false),
+GameSession::GameSession(const std::string& p1, const std::string& p2, std::shared_ptr<asio::ip::tcp::socket> p1Sock, std::shared_ptr<asio::ip::tcp::socket> p2Sock)
+    : p1Name(p1), p2Name(p2), p1Socket(p1Sock), p2Socket(p2Sock), hp1(5), hp2(5), gameOver(false),
       p1Handcuffed(false), p2Handcuffed(false), knifeActive(false), inverterActive(false), itemsUsedThisTurn(0) {
     
     currentTurn = p1Name; // P1 starts
