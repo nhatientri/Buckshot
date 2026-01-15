@@ -15,6 +15,13 @@ ImGuiID lastHoveredId = 0;
 
 // Texture Globals
 GLuint opponentTexture = 0;
+GLuint texBeer = 0;
+GLuint texCigs = 0;
+GLuint texHandcuffs = 0;
+GLuint texGlass = 0;
+GLuint texKnife = 0;
+GLuint texInverter = 0;
+GLuint texMeds = 0;
 
 // Audio Helper Wrapper
 bool PlaySoundButton(const char* label, const ImVec2& size = ImVec2(0,0)) {
@@ -97,6 +104,19 @@ std::string GetItemName(uint8_t itemType) {
     }
 }
 
+GLuint GetItemTexture(uint8_t itemType) {
+    switch (itemType) {
+        case Buckshot::ITEM_BEER: return texBeer;
+        case Buckshot::ITEM_CIGARETTES: return texCigs;
+        case Buckshot::ITEM_HANDCUFFS: return texHandcuffs;
+        case Buckshot::ITEM_MAGNIFYING_GLASS: return texGlass;
+        case Buckshot::ITEM_KNIFE: return texKnife;
+        case Buckshot::ITEM_INVERTER: return texInverter;
+        case Buckshot::ITEM_EXPIRED_MEDICINE: return texMeds;
+        default: return 0;
+    }
+}
+
 // Helper to draw a specialized item card
 // Returns true if clicked
 bool DrawItemCard(uint8_t itemType, bool clickable, const ImVec2& size = ImVec2(80, 100)) {
@@ -115,7 +135,8 @@ bool DrawItemCard(uint8_t itemType, bool clickable, const ImVec2& size = ImVec2(
 
     std::string name = GetItemName(itemType);
     std::string label = name + "##card"; 
-    
+    GLuint tex = GetItemTexture(itemType);
+
     ImGui::PushID(itemType);
     bool pressed = false;
 
@@ -125,14 +146,37 @@ bool DrawItemCard(uint8_t itemType, bool clickable, const ImVec2& size = ImVec2(
     
     // If clickable, change color on hover/active
     if (clickable) {
-         // This is a bit manual for a custom "Button" look with child window, 
-         // but effectively we can just use a Button with size.
-         // Let's use a Button for simplicity but style it.
-         ImGui::PopStyleColor(); // Remove ChildBg to use Button colors
-         pressed = ImGui::Button(name.c_str(), size);
+         if (tex != 0) {
+             ImGui::PopStyleColor(); // ImageButton handles its own bg usually, or we style it
+             // ImageButton is a bit distinct.
+             // To make it fit 'size', we need to check internal padding. 
+             // FramePadding is usually added.
+             // ImGui::ImageButton returns true on click.
+             // We pass independent ID.
+             // ImageButton(..., size) size is size of image. We want total size of button.
+             // We can use ImGui::ImageButton with size matching our expectation minus padding.
+             // Or just use Image inside a Button (harder to align) or ImageButton resizing.
+             
+             // Simplest: ImageButton with size param.
+             // Note: ImageButton API varies by version but usually:
+             // ImageButton(str_id, user_texture_id, size, uv0, uv1, bg_col, tint_col)
+             
+             if (ImGui::ImageButton(label.c_str(), (void*)(intptr_t)tex, size)) {
+                 pressed = true;
+             }
+         } else {
+             ImGui::PopStyleColor(); 
+             pressed = ImGui::Button(name.c_str(), size);
+         }
          
          if (ImGui::IsItemHovered()) {
-             ImGuiID id = ImGui::GetID(name.c_str());
+             // Tooltip
+             ImGui::BeginTooltip();
+             ImGui::Text("%s", name.c_str());
+             ImGui::EndTooltip();
+             
+             ImGuiID id = ImGui::GetID(label.c_str()); // Use consistent ID source? label includes ##card
+             // Actually GetID with ptr is stable.
              if (id != lastHoveredId) {
                  if (hoverSound) Mix_PlayChannel(-1, hoverSound, 0);
                  lastHoveredId = id;
@@ -142,10 +186,15 @@ bool DrawItemCard(uint8_t itemType, bool clickable, const ImVec2& size = ImVec2(
     } else {
         ImGui::BeginChild(label.c_str(), size, true, ImGuiWindowFlags_NoScrollbar);
         
-        // Centered text
-        ImVec2 textSize = ImGui::CalcTextSize(name.c_str());
-        ImGui::SetCursorPos(ImVec2((size.x - textSize.x) * 0.5f, (size.y - textSize.y) * 0.5f));
-        ImGui::Text("%s", name.c_str());
+        if (tex != 0) {
+            // Read-only image
+            ImGui::Image((void*)(intptr_t)tex, ImVec2(size.x - 16, size.y - 16)); // Padding
+        } else {
+            // Centered text
+            ImVec2 textSize = ImGui::CalcTextSize(name.c_str());
+            ImGui::SetCursorPos(ImVec2((size.x - textSize.x) * 0.5f, (size.y - textSize.y) * 0.5f));
+            ImGui::Text("%s", name.c_str());
+        }
         
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -287,6 +336,20 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
         ImGui::SetWindowFontScale(1.0f); // Reset
         
         ImGui::PopStyleColor(); // Pop Color
+
+        // AFK Timer
+        if (!s.gameOver && !s.isPaused) {
+            std::string timeText = "Time: " + std::to_string(s.turnTimeRemaining) + "s";
+            float timeW = ImGui::CalcTextSize(timeText.c_str()).x;
+            ImGui::NewLine();
+            ImGui::SameLine((boardWidth - timeW) * 0.5f);
+            
+            if (s.turnTimeRemaining <= 10) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,0,0,1)); // Red warning
+            else ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
+            
+            ImGui::Text("%s", timeText.c_str());
+            ImGui::PopStyleColor();
+        }
 
         // Ammo Info
         std::string ammoText = "Shells: " + std::to_string(s.liveCount) + " Live / " + std::to_string(s.blankCount) + " Blank";
@@ -526,6 +589,14 @@ int main(int argc, char** argv) {
     std::cout << "Loading textures..." << std::endl;
     opponentTexture = LoadTextureFromFile("assets/dealer.png");
     if (opponentTexture != 0) std::cout << "Opponent texture loaded successfully: " << opponentTexture << std::endl;
+
+    texBeer = LoadTextureFromFile("assets/beer.png");
+    texCigs = LoadTextureFromFile("assets/cigarettes.png");
+    texHandcuffs = LoadTextureFromFile("assets/handcuffs.png");
+    texGlass = LoadTextureFromFile("assets/magnifying_glass.png");
+    texKnife = LoadTextureFromFile("assets/knife.png");
+    texInverter = LoadTextureFromFile("assets/inverter.png");
+    texMeds = LoadTextureFromFile("assets/medicine.png");
 
     // Network Client
     // Network Client

@@ -82,7 +82,43 @@ void NetworkClient::removeChallenge(size_t index) {
 
 void NetworkClient::processPacket(const PacketHeader& header, const std::vector<char>& body) {
     std::lock_guard<std::mutex> lock(dataMutex);
-    std::cout << "[Client] Received Packet Cmd: " << (int)header.command << " Size: " << header.size << std::endl;
+    std::string cmdName = "UNKNOWN";
+    switch(header.command) {
+        case CMD_OK: cmdName = "CMD_OK"; break;
+        case CMD_REGISTER: cmdName = "CMD_REGISTER"; break;
+        case CMD_LOGIN: cmdName = "CMD_LOGIN"; break;
+        case CMD_FAIL: cmdName = "CMD_FAIL"; break;
+        case CMD_LIST_USERS: cmdName = "CMD_LIST_USERS"; break;
+        case CMD_LIST_USERS_RESP: cmdName = "CMD_LIST_USERS_RESP"; break;
+        case CMD_LEADERBOARD: cmdName = "CMD_LEADERBOARD"; break;
+        case CMD_LEADERBOARD_RESP: cmdName = "CMD_LEADERBOARD_RESP"; break;
+        case CMD_CHALLENGE_REQ: cmdName = "CMD_CHALLENGE_REQ"; break;
+        case CMD_CHALLENGE_RESP: cmdName = "CMD_CHALLENGE_RESP"; break;
+        case CMD_GAME_START: cmdName = "CMD_GAME_START"; break;
+        case CMD_GAME_MOVE: cmdName = "CMD_GAME_MOVE"; break;
+        case CMD_GAME_STATE: cmdName = "CMD_GAME_STATE"; break;
+        case CMD_GAME_RESULT: cmdName = "CMD_GAME_RESULT"; break;
+        case CMD_LIST_REPLAYS: cmdName = "CMD_LIST_REPLAYS"; break;
+        case CMD_LIST_REPLAYS_RESP: cmdName = "CMD_LIST_REPLAYS_RESP"; break;
+        case CMD_GET_REPLAY: cmdName = "CMD_GET_REPLAY"; break;
+        case CMD_REPLAY_DATA: cmdName = "CMD_REPLAY_DATA"; break;
+        case CMD_PLAY_AI: cmdName = "CMD_PLAY_AI"; break;
+        case CMD_RESIGN: cmdName = "CMD_RESIGN"; break;
+        case CMD_QUEUE_JOIN: cmdName = "CMD_QUEUE_JOIN"; break;
+        case CMD_QUEUE_LEAVE: cmdName = "CMD_QUEUE_LEAVE"; break;
+        case CMD_TOGGLE_PAUSE: cmdName = "CMD_TOGGLE_PAUSE"; break;
+        case CMD_GET_HISTORY: cmdName = "CMD_GET_HISTORY"; break;
+        case CMD_HISTORY_DATA: cmdName = "CMD_HISTORY_DATA"; break;
+        case CMD_FRIEND_ADD: cmdName = "CMD_FRIEND_ADD"; break;
+        case CMD_FRIEND_LIST: cmdName = "CMD_FRIEND_LIST"; break;
+        case CMD_FRIEND_LIST_RESP: cmdName = "CMD_FRIEND_LIST_RESP"; break;
+        case CMD_FRIEND_REQ_INCOMING: cmdName = "CMD_FRIEND_REQ_INCOMING"; break;
+        case CMD_FRIEND_ACCEPT: cmdName = "CMD_FRIEND_ACCEPT"; break;
+        case CMD_FRIEND_REMOVE: cmdName = "CMD_FRIEND_REMOVE"; break;
+        case CMD_ERROR: cmdName = "CMD_ERROR"; break;
+        default: cmdName = std::to_string((int)header.command); break;
+    }
+    std::cout << "[Client] Received Packet Cmd: " << cmdName << " Size: " << header.size << std::endl;
     
     if (header.command == CMD_OK || header.command == RES_OK) {
         // Context dependent... assume login/register ok if we were waiting

@@ -25,6 +25,8 @@ Server::Server(int port)
 {
     // User migration happens during construction if needed, or controlled by UserManager
     lastTimeoutCheck = std::chrono::steady_clock::now();
+    lastMatchmakingBatch = std::chrono::steady_clock::now();
+    lastStateBroadcast = std::chrono::steady_clock::now();
 }
 
 void Server::run() {
@@ -127,7 +129,7 @@ void Server::startGameloop() {
                     auto& game = *it;
                     if (game->checkTimeout(30)) {
                          std::cout << "Game timed out!" << std::endl;
-                         // Broadcast State
+                         // Broadcast (handled inside timeout block logic below...)
                          GameStatePacket state = game->getState();
                          PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
                          
@@ -154,6 +156,21 @@ void Server::startGameloop() {
                     } else {
                         ++it;
                     }
+                }
+            }
+
+            // 1.5 PERIODIC BROADCAST (Sync Timers)
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStateBroadcast).count() >= 1000) {
+                lastStateBroadcast = now;
+                for (auto& game : activeGames) {
+                     if (!game->isGameOver()) {
+                         GameStatePacket state = game->getState();
+                         PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
+                         sendPacket(game->getP1Socket(), &h, sizeof(h));
+                         sendPacket(game->getP1Socket(), &state, sizeof(state));
+                         sendPacket(game->getP2Socket(), &h, sizeof(h));
+                         sendPacket(game->getP2Socket(), &state, sizeof(state));
+                     }
                 }
             }
             
@@ -186,32 +203,70 @@ void Server::startGameloop() {
 }
 
 void Server::processMatchmaking() {
-    while (matchmakingQueue.size() >= 2) {
-        std::string u1 = matchmakingQueue[0];
-        std::string u2 = matchmakingQueue[1];
-        matchmakingQueue.erase(matchmakingQueue.begin());
-        matchmakingQueue.erase(matchmakingQueue.begin());
-        
-        auto s1 = getSocketByUsername(u1);
-        auto s2 = getSocketByUsername(u2);
-        
-        if (!s1 || !s2) {
-            if (s1) matchmakingQueue.push_back(u1);
-            if (s2) matchmakingQueue.push_back(u2);
-            continue;
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - lastMatchmakingBatch).count() < 5) {
+        return; // Batch every 5 seconds
+    }
+    
+    if (matchmakingQueue.size() < 2) return;
+    
+    lastMatchmakingBatch = now;
+    
+    // 1. Collect Valid Users
+    struct QueueEntry {
+        std::string username;
+        int elo;
+    };
+    std::vector<QueueEntry> pool;
+    
+    for (const auto& uname : matchmakingQueue) {
+        auto sock = getSocketByUsername(uname);
+        if (sock) {
+            auto u = userManager.getUser(uname);
+            if (u) {
+                pool.push_back({uname, u->elo});
+            }
         }
+    }
+    
+    matchmakingQueue.clear(); // Will rebuild
+    
+    // 2. Sort by ELO
+    std::sort(pool.begin(), pool.end(), [](const QueueEntry& a, const QueueEntry& b) {
+        return a.elo < b.elo;
+    });
+    
+    // 3. Match Pairs
+    while (pool.size() >= 2) {
+        QueueEntry p1 = pool.back(); pool.pop_back();
+        QueueEntry p2 = pool.back(); pool.pop_back();
         
-        std::cout << "Matchmaking: " << u1 << " vs " << u2 << std::endl;
-        auto game = std::make_shared<GameSession>(u1, u2, s1, s2);
-        activeGames.push_back(game);
-        
-        GameStatePacket state = game->getState();
-        PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
-        
-        sendPacket(s1, &h, sizeof(h));
-        sendPacket(s1, &state, sizeof(state));
-        sendPacket(s2, &h, sizeof(h));
-        sendPacket(s2, &state, sizeof(state));
+        auto s1 = getSocketByUsername(p1.username);
+        auto s2 = getSocketByUsername(p2.username);
+
+        // Double check functionality (user could disconnect mid-loop)
+        if (s1 && s2) {
+            std::cout << "Matchmaking (Batch): " << p1.username << " (" << p1.elo << ") vs " << p2.username << " (" << p2.elo << ")" << std::endl;
+            auto game = std::make_shared<GameSession>(p1.username, p2.username, s1, s2);
+            activeGames.push_back(game);
+            
+            GameStatePacket state = game->getState();
+            PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
+            
+            sendPacket(s1, &h, sizeof(h));
+            sendPacket(s1, &state, sizeof(state));
+            sendPacket(s2, &h, sizeof(h));
+            sendPacket(s2, &state, sizeof(state));
+        } else {
+            // If one disconnected, put the other back
+            if (s1) matchmakingQueue.push_back(p1.username);
+            if (s2) matchmakingQueue.push_back(p2.username);
+        }
+    }
+    
+    // 4. Handle Remainder
+    for (const auto& entry : pool) {
+        matchmakingQueue.push_back(entry.username);
     }
 }
 

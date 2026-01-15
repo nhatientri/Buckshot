@@ -33,6 +33,8 @@ private:
     std::map<std::shared_ptr<asio::ip::tcp::socket>, std::string> authenticatedUsers; 
     std::vector<std::shared_ptr<GameSession>> activeGames;
     std::chrono::steady_clock::time_point lastTimeoutCheck;
+    std::chrono::steady_clock::time_point lastMatchmakingBatch;
+    std::chrono::steady_clock::time_point lastStateBroadcast;
 
     void doAccept();
     void doRead(std::shared_ptr<asio::ip::tcp::socket> socket);
