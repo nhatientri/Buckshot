@@ -31,7 +31,7 @@ Server::Server(int port)
 
 void Server::run() {
     running = true;
-    std::cout << "Server listening on port " << port << " (Asio)..." << std::endl;
+    std::cout << "Server listening on port " << port << std::endl;
     
     doAccept();
     startGameloop();
