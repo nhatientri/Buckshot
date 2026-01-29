@@ -3,7 +3,9 @@
 #include <fstream>
 #include <sstream>
 #include <cmath>
+#include <cmath>
 #include <algorithm>
+#include <cstring>
 
 namespace Buckshot {
 

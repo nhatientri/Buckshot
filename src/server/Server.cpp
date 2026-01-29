@@ -8,211 +8,185 @@
 
 namespace Buckshot {
 
-// Helper: Synchronous write for simplicity in migration
-void sendPacket(std::shared_ptr<asio::ip::tcp::socket> socket, const void* data, size_t size) {
-    if (!socket) return;
-    try {
-        asio::write(*socket, asio::buffer(data, size));
-    } catch (std::exception& e) {
-        // Drop packet if send fails
-    }
-}
-
 Server::Server(int port) 
-    : port(port), running(false), 
-      io_context(), acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)),
-      gameloop_timer(io_context) 
+    : port(port), running(false), socketServer(port)
 {
-    // User migration happens during construction if needed, or controlled by UserManager
     lastTimeoutCheck = std::chrono::steady_clock::now();
     lastMatchmakingBatch = std::chrono::steady_clock::now();
     lastStateBroadcast = std::chrono::steady_clock::now();
+    
+    // Bind Callbacks
+    socketServer.setConnectCallback(std::bind(&Server::onConnect, this, std::placeholders::_1));
+    socketServer.setDataCallback(std::bind(&Server::onData, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+    socketServer.setDisconnectCallback(std::bind(&Server::onDisconnect, this, std::placeholders::_1));
 }
 
 void Server::run() {
     running = true;
-    std::cout << "Server listening on port " << port << std::endl;
-    
-    doAccept();
     startGameloop();
-    
-    io_context.run(); 
+    socketServer.run(); 
 }
 
-void Server::doAccept() {
-    auto socket = std::make_shared<asio::ip::tcp::socket>(io_context);
-    acceptor.async_accept(*socket, [this, socket](std::error_code ec) {
-        if (!ec) {
-            std::cout << "New connection" << std::endl;
-            clients.push_back(socket);
-            doRead(socket);
+void Server::sendPacket(int client, const void* data, size_t size) {
+    socketServer.sendData(client, data, size);
+}
+
+void Server::onConnect(int clientFd) {
+    std::cout << "New connection: " << clientFd << std::endl;
+    clientBuffers[clientFd] = std::vector<char>(); // Init buffer
+}
+
+void Server::onDisconnect(int clientFd) {
+    auto game = getGameSession(clientFd);
+    if (game) {
+        std::string user = authenticatedUsers[clientFd];
+        if (!user.empty()) {
+            std::cout << "Player " << user << " disconnected." << std::endl;
+            game->resign(user);
         }
-        doAccept();
-    });
+    }
+    
+    if (authenticatedUsers.count(clientFd)) {
+        std::string u = authenticatedUsers[clientFd];
+        pendingChallenges.erase(u);
+        for (auto it = pendingChallenges.begin(); it != pendingChallenges.end(); ) {
+            if (it->second == u) it = pendingChallenges.erase(it);
+            else ++it;
+        }
+        auto qIt = std::find(matchmakingQueue.begin(), matchmakingQueue.end(), u);
+        if (qIt != matchmakingQueue.end()) matchmakingQueue.erase(qIt);
+    }
+    
+    authenticatedUsers.erase(clientFd);
+    clientBuffers.erase(clientFd);
+    
+    broadcastUserList();
 }
 
-void Server::doRead(std::shared_ptr<asio::ip::tcp::socket> socket) {
-    auto header = std::make_shared<PacketHeader>();
-    asio::async_read(*socket, asio::buffer(header.get(), sizeof(PacketHeader)),
-        [this, socket, header](std::error_code ec, std::size_t) {
-            if (!ec) {
-                if (header->size > 0 && header->size < 100000) { // Basic sanity check
-                    auto body = std::make_shared<std::vector<char>>(header->size);
-                    asio::async_read(*socket, asio::buffer(*body),
-                        [this, socket, header, body](std::error_code ec2, std::size_t) {
-                            if (!ec2) {
-                                processPacket(socket, *header, *body);
-                                doRead(socket);
-                            } else {
-                                // Error reading body
-                                // Handle disconnect
-                                auto game = getGameSession(socket);
-                                if (game) {
-                                    std::string user = authenticatedUsers[socket];
-                                    std::cout << "Player " << user << " disconnected." << std::endl;
-                                    game->resign(user);
-                                }
-                                authenticatedUsers.erase(socket);
-                                auto it = std::find(clients.begin(), clients.end(), socket);
-                                if (it != clients.end()) clients.erase(it);
-                            }
-                        });
-                } else if (header->size == 0) {
-                    std::vector<char> empty;
-                    processPacket(socket, *header, empty);
-                    doRead(socket);
-                } else {
-                     // Invalid size -> Disconnect
-                     authenticatedUsers.erase(socket);
-                     auto it = std::find(clients.begin(), clients.end(), socket);
-                     if (it != clients.end()) clients.erase(it);
-                }
-            } else {
-                // Disconnect
-                // Shared logic for disconnect
-                 auto game = getGameSession(socket);
-                 if (game) {
-                     std::string user = authenticatedUsers[socket];
-                     if (!user.empty()) {
-                        std::cout << "Player " << user << " disconnected." << std::endl;
-                        game->resign(user);
-                     }
-                 }
-                 if (authenticatedUsers.count(socket)) {
-                     std::string u = authenticatedUsers[socket];
-                     pendingChallenges.erase(u);
-                     for (auto it = pendingChallenges.begin(); it != pendingChallenges.end(); ) {
-                        if (it->second == u) it = pendingChallenges.erase(it);
-                        else ++it;
-                     }
-                     auto qIt = std::find(matchmakingQueue.begin(), matchmakingQueue.end(), u);
-                     if (qIt != matchmakingQueue.end()) matchmakingQueue.erase(qIt);
-                 }
-                 authenticatedUsers.erase(socket);
-                 auto it = std::find(clients.begin(), clients.end(), socket);
-                 if (it != clients.end()) clients.erase(it);
-                 
-                 broadcastUserList();
-            }
-        });
+void Server::onData(int clientFd, const char* data, size_t size) {
+    // Append to buffer
+    std::vector<char>& buf = clientBuffers[clientFd];
+    buf.insert(buf.end(), data, data + size);
+    
+    // Process packets loop
+    while (true) {
+        if (buf.size() < sizeof(PacketHeader)) break;
+        
+        // Peek header
+        PacketHeader* header = (PacketHeader*)buf.data();
+        size_t totalSize = sizeof(PacketHeader) + header->size;
+        
+        if (buf.size() < totalSize) break; // Wait for more data
+        
+        // Sanity Check
+        if (header->size > 100000) {
+             std::cout << "Oversized packet (" << header->size << "), disconnecting " << clientFd << std::endl;
+             socketServer.closeSocket(clientFd);
+             return;
+        }
+        
+        // Extract body
+        std::vector<char> body;
+        if (header->size > 0) {
+            body.assign(buf.begin() + sizeof(PacketHeader), buf.begin() + totalSize);
+        }
+        
+        // Process
+        processPacket(clientFd, *header, body);
+        
+        // Remove from buffer
+        buf.erase(buf.begin(), buf.begin() + totalSize);
+    }
 }
 
 void Server::startGameloop() {
-    gameloop_timer.expires_after(std::chrono::milliseconds(100)); // 10Hz tick
-    gameloop_timer.async_wait([this](std::error_code ec) {
-        if (!ec) {
-            // 1. Timeout Checks
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - lastTimeoutCheck).count() >= 1) {
-                lastTimeoutCheck = now;
-                for (auto it = activeGames.begin(); it != activeGames.end();) {
-                    auto& game = *it;
-                    if (game->checkTimeout(30)) {
-                         std::cout << "Game timed out!" << std::endl;
-                         // Broadcast (handled inside timeout block logic below...)
-                         GameStatePacket state = game->getState();
-                         PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
-                         
-                         sendPacket(game->getP1Socket(), &h, sizeof(h));
-                         sendPacket(game->getP1Socket(), &state, sizeof(state));
-                         sendPacket(game->getP2Socket(), &h, sizeof(h));
-                         sendPacket(game->getP2Socket(), &state, sizeof(state));
-                         
-                         // Record
-                         std::string winner = game->getState().winner;
-                         std::string lose = (winner == game->getP1Name()) ? game->getP2Name() : game->getP1Name();
-                         std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
-                         auto deltas = userManager.recordMatch(winner, lose, replay);
-                         game->setEloChanges((winner==game->getP1Name())?deltas.first : deltas.second, (winner==game->getP2Name())?deltas.first : deltas.second);
-
-                         // Re-broadcast
-                         state = game->getState();
-                         sendPacket(game->getP1Socket(), &h, sizeof(h));
-                         sendPacket(game->getP1Socket(), &state, sizeof(state));
-                         sendPacket(game->getP2Socket(), &h, sizeof(h));
-                         sendPacket(game->getP2Socket(), &state, sizeof(state));
-                         
-                         it = activeGames.erase(it);
-                    } else {
-                        ++it;
-                    }
-                }
-            }
-
-            // 1.5 PERIODIC BROADCAST (Sync Timers)
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStateBroadcast).count() >= 1000) {
-                lastStateBroadcast = now;
-                for (auto& game : activeGames) {
-                     if (!game->isGameOver()) {
-                         GameStatePacket state = game->getState();
-                         PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
-                         sendPacket(game->getP1Socket(), &h, sizeof(h));
-                         sendPacket(game->getP1Socket(), &state, sizeof(state));
-                         sendPacket(game->getP2Socket(), &h, sizeof(h));
-                         sendPacket(game->getP2Socket(), &state, sizeof(state));
-                     }
-                }
-            }
-            
-            // 2. AI Logic
+    // Uses SocketServer timer instead of Asio timer
+    socketServer.addTimer(100, [this]() {
+        // 1. Timeout Checks
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - lastTimeoutCheck).count() >= 1) {
+            lastTimeoutCheck = now;
             for (auto it = activeGames.begin(); it != activeGames.end();) {
                 auto& game = *it;
-                if (game->isAiGame() && game->executeAiTurn()) {
-                     GameStatePacket state = game->getState();
-                     PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
-                     sendPacket(game->getP1Socket(), &h, sizeof(h));
-                     sendPacket(game->getP1Socket(), &state, sizeof(state));
-                     
-                     if (game->isGameOver()) {
-                         std::string winner = game->getState().winner;
-                         std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
-                         userManager.recordMatch(winner, (winner==game->getP1Name())?game->getP2Name():game->getP1Name(), replay);
-                         it = activeGames.erase(it);
-                         continue;
-                     }
+                if (game->checkTimeout(30)) {
+                        std::cout << "Game timed out!" << std::endl;
+                        GameStatePacket state = game->getState();
+                        PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
+                        
+                        sendPacket(game->getP1Socket(), &h, sizeof(h));
+                        sendPacket(game->getP1Socket(), &state, sizeof(state));
+                        sendPacket(game->getP2Socket(), &h, sizeof(h));
+                        sendPacket(game->getP2Socket(), &state, sizeof(state));
+                        
+                        std::string winner = game->getState().winner;
+                        std::string lose = (winner == game->getP1Name()) ? game->getP2Name() : game->getP1Name();
+                        std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+                        auto deltas = userManager.recordMatch(winner, lose, replay);
+                        game->setEloChanges((winner==game->getP1Name())?deltas.first : deltas.second, (winner==game->getP2Name())?deltas.first : deltas.second);
+
+                        state = game->getState();
+                        sendPacket(game->getP1Socket(), &h, sizeof(h));
+                        sendPacket(game->getP1Socket(), &state, sizeof(state));
+                        sendPacket(game->getP2Socket(), &h, sizeof(h));
+                        sendPacket(game->getP2Socket(), &state, sizeof(state));
+                        
+                        it = activeGames.erase(it);
+                } else {
+                    ++it;
                 }
-                ++it;
             }
-            
-            // 3. Matchmaking
-            processMatchmaking();
-            
-            startGameloop();
         }
+
+        // 1.5 PERIODIC BROADCAST (Sync Timers)
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStateBroadcast).count() >= 1000) {
+            lastStateBroadcast = now;
+            for (auto& game : activeGames) {
+                    if (!game->isGameOver()) {
+                        GameStatePacket state = game->getState();
+                        PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
+                        sendPacket(game->getP1Socket(), &h, sizeof(h));
+                        sendPacket(game->getP1Socket(), &state, sizeof(state));
+                        sendPacket(game->getP2Socket(), &h, sizeof(h));
+                        sendPacket(game->getP2Socket(), &state, sizeof(state));
+                    }
+            }
+        }
+        
+        // 2. AI Logic
+        for (auto it = activeGames.begin(); it != activeGames.end();) {
+            auto& game = *it;
+            if (game->isAiGame() && game->executeAiTurn()) {
+                    GameStatePacket state = game->getState();
+                    PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
+                    sendPacket(game->getP1Socket(), &h, sizeof(h));
+                    sendPacket(game->getP1Socket(), &state, sizeof(state));
+                    
+                    if (game->isGameOver()) {
+                        std::string winner = game->getState().winner;
+                        std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+                        userManager.recordMatch(winner, (winner==game->getP1Name())?game->getP2Name():game->getP1Name(), replay);
+                        it = activeGames.erase(it);
+                        continue;
+                    }
+            }
+            ++it;
+        }
+        
+        // 3. Matchmaking
+        processMatchmaking();
     });
 }
 
 void Server::processMatchmaking() {
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration_cast<std::chrono::seconds>(now - lastMatchmakingBatch).count() < 5) {
-        return; // Batch every 5 seconds
+        return; 
     }
     
     if (matchmakingQueue.size() < 2) return;
     
     lastMatchmakingBatch = now;
     
-    // 1. Collect Valid Users
     struct QueueEntry {
         std::string username;
         int elo;
@@ -220,8 +194,8 @@ void Server::processMatchmaking() {
     std::vector<QueueEntry> pool;
     
     for (const auto& uname : matchmakingQueue) {
-        auto sock = getSocketByUsername(uname);
-        if (sock) {
+        int sock = getSocketByUsername(uname);
+        if (sock != -1) {
             auto u = userManager.getUser(uname);
             if (u) {
                 pool.push_back({uname, u->elo});
@@ -229,23 +203,20 @@ void Server::processMatchmaking() {
         }
     }
     
-    matchmakingQueue.clear(); // Will rebuild
+    matchmakingQueue.clear(); 
     
-    // 2. Sort by ELO
     std::sort(pool.begin(), pool.end(), [](const QueueEntry& a, const QueueEntry& b) {
         return a.elo < b.elo;
     });
     
-    // 3. Match Pairs
     while (pool.size() >= 2) {
         QueueEntry p1 = pool.back(); pool.pop_back();
         QueueEntry p2 = pool.back(); pool.pop_back();
         
-        auto s1 = getSocketByUsername(p1.username);
-        auto s2 = getSocketByUsername(p2.username);
+        int s1 = getSocketByUsername(p1.username);
+        int s2 = getSocketByUsername(p2.username);
 
-        // Double check functionality (user could disconnect mid-loop)
-        if (s1 && s2) {
+        if (s1 != -1 && s2 != -1) {
             std::cout << "Matchmaking (Batch): " << p1.username << " (" << p1.elo << ") vs " << p2.username << " (" << p2.elo << ")" << std::endl;
             auto game = std::make_shared<GameSession>(p1.username, p2.username, s1, s2);
             activeGames.push_back(game);
@@ -258,33 +229,31 @@ void Server::processMatchmaking() {
             sendPacket(s2, &h, sizeof(h));
             sendPacket(s2, &state, sizeof(state));
         } else {
-            // If one disconnected, put the other back
-            if (s1) matchmakingQueue.push_back(p1.username);
-            if (s2) matchmakingQueue.push_back(p2.username);
+            if (s1 != -1) matchmakingQueue.push_back(p1.username);
+            if (s2 != -1) matchmakingQueue.push_back(p2.username);
         }
     }
     
-    // 4. Handle Remainder
     for (const auto& entry : pool) {
         matchmakingQueue.push_back(entry.username);
     }
 }
 
-std::shared_ptr<asio::ip::tcp::socket> Server::getSocketByUsername(const std::string& username) {
+int Server::getSocketByUsername(const std::string& username) {
     for (auto& pair : authenticatedUsers) {
         if (pair.second == username) return pair.first;
     }
-    return nullptr;
+    return -1;
 }
 
-std::shared_ptr<GameSession> Server::getGameSession(std::shared_ptr<asio::ip::tcp::socket> client) {
+std::shared_ptr<GameSession> Server::getGameSession(int client) {
     for (auto& game : activeGames) {
         if (game->getP1Socket() == client || game->getP2Socket() == client) return game;
     }
     return nullptr;
 }
 
-void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, PacketHeader& header, const std::vector<char>& body) {
+void Server::processPacket(int client, PacketHeader& header, const std::vector<char>& body) {
     if (header.command == CMD_REGISTER) {
         if (header.size == sizeof(LoginRequest)) {
             LoginRequest* req = (LoginRequest*)body.data();
@@ -323,12 +292,10 @@ void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, Packet
         if (header.size == sizeof(ChallengePacket)) {
             ChallengePacket* pkt = (ChallengePacket*)body.data();
             std::string target(pkt->targetUser);
-            auto targetSock = getSocketByUsername(target);
-            if (targetSock) {
+            int targetSock = getSocketByUsername(target);
+            if (targetSock != -1) {
                 std::string sender = authenticatedUsers[client];
-                // Cross challenge check
                 if (pendingChallenges.count(target) && pendingChallenges[target] == sender) {
-                    // Match
                     pendingChallenges.erase(target);
                     auto game = std::make_shared<GameSession>(target, sender, targetSock, client);
                     activeGames.push_back(game);
@@ -354,9 +321,8 @@ void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, Packet
         if (header.size == sizeof(ChallengePacket)) {
             ChallengePacket* pkt = (ChallengePacket*)body.data();
             std::string origChallenger(pkt->targetUser);
-            auto challSock = getSocketByUsername(origChallenger);
-            if (challSock) {
-                // Accepted
+            int challSock = getSocketByUsername(origChallenger);
+            if (challSock != -1) {
                  auto game = std::make_shared<GameSession>(origChallenger, authenticatedUsers[client], challSock, client);
                  activeGames.push_back(game);
                  
@@ -371,7 +337,7 @@ void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, Packet
     } else if (header.command == CMD_PLAY_AI) {
         if (!getGameSession(client)) {
             std::string p1 = authenticatedUsers[client];
-            auto game = std::make_shared<GameSession>(p1, "The Dealer", client, nullptr);
+            auto game = std::make_shared<GameSession>(p1, "The Dealer", client, -1);
             activeGames.push_back(game);
             
              GameStatePacket state = game->getState();
@@ -399,7 +365,6 @@ void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, Packet
         auto game = getGameSession(client);
         if (game) {
             game->resign(authenticatedUsers[client]);
-            // Broadcast
              GameStatePacket state = game->getState();
              PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
              sendPacket(game->getP1Socket(), &h, sizeof(h));
@@ -421,7 +386,6 @@ void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, Packet
             auto game = getGameSession(client);
             if (game) {
                  game->processMove(authenticatedUsers[client], (MoveType)mv->moveType, (ItemType)mv->itemType);
-                 // Broadcast
                  GameStatePacket state = game->getState();
                  PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
                  sendPacket(game->getP1Socket(), &h, sizeof(h));
@@ -435,7 +399,6 @@ void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, Packet
                       auto deltas = userManager.recordMatch(winner, (winner==game->getP1Name())?game->getP2Name():game->getP1Name(), replay);
                       game->setEloChanges((winner==game->getP1Name())?deltas.first:deltas.second, (winner==game->getP2Name())?deltas.first:deltas.second);
                       
-                      // Resend ELO
                         state = game->getState();
                         sendPacket(game->getP1Socket(), &h, sizeof(h));
                         sendPacket(game->getP1Socket(), &state, sizeof(state));
@@ -471,8 +434,8 @@ void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, Packet
         ChallengePacket* pkt = (ChallengePacket*)body.data();
         std::string target = pkt->targetUser;
         if(userManager.addFriendRequest(authenticatedUsers[client], target)) {
-             auto ts = getSocketByUsername(target);
-             if (ts) {
+             int ts = getSocketByUsername(target);
+             if (ts != -1) {
                  ChallengePacket req; strncpy(req.targetUser, authenticatedUsers[client].c_str(), 32);
                  PacketHeader h = {(uint32_t)sizeof(req), CMD_FRIEND_REQ_INCOMING};
                  sendPacket(ts, &h, sizeof(h));
@@ -488,7 +451,6 @@ void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, Packet
     } else if (header.command == CMD_FRIEND_LIST) {
         std::string user = authenticatedUsers[client];
         std::string list = userManager.getFriendList(user);
-        // Inject online
         std::stringstream ss(list);
         std::string item, finalList;
         while(std::getline(ss, item, ',')) {
@@ -498,7 +460,7 @@ void Server::processPacket(std::shared_ptr<asio::ip::tcp::socket> client, Packet
                 std::string fname = item.substr(0, colon);
                 std::string stat = item.substr(colon+1);
                 if(stat == "ACCEPTED") {
-                     stat = getSocketByUsername(fname) ? "ONLINE" : "OFFLINE";
+                     stat = getSocketByUsername(fname) != -1 ? "ONLINE" : "OFFLINE";
                 }
                 if(!finalList.empty()) finalList += ",";
                 finalList += fname + ":" + stat;
@@ -521,3 +483,60 @@ void Server::broadcastUserList() {
 }
 
 }
+
+/* [ASIO REFERENCE IMPLEMENTATION]
+Server::Server(int port)
+    : port(port), running(false),
+      io_context(), acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)),
+      gameloop_timer(io_context)
+{
+    lastTimeoutCheck = std::chrono::steady_clock::now();
+    // ...
+}
+
+void Server::run() {
+    running = true;
+    std::cout << "Server listening on port " << port << std::endl;
+    
+    doAccept();
+    startGameloop();
+    
+    io_context.run(); 
+}
+
+void Server::doAccept() {
+    auto socket = std::make_shared<asio::ip::tcp::socket>(io_context);
+    acceptor.async_accept(*socket, [this, socket](std::error_code ec) {
+        if (!ec) {
+            clients.push_back(socket);
+            std::cout << "New connection" << std::endl;
+            doRead(socket);
+        }
+        doAccept(); 
+    });
+}
+
+void Server::doRead(std::shared_ptr<asio::ip::tcp::socket> socket) {
+    auto header = std::make_shared<PacketHeader>();
+    asio::async_read(*socket, asio::buffer(header.get(), sizeof(PacketHeader)),
+        [this, socket, header](std::error_code ec, std::size_t) {
+            if (!ec) {
+                auto body = std::make_shared<std::vector<char>>(header->size);
+                if (header->size > 0) {
+                     asio::async_read(*socket, asio::buffer(*body),
+                        [this, socket, header, body](std::error_code ec2, std::size_t) {
+                            if (!ec2) {
+                                processPacket(socket, *header, *body);
+                                doRead(socket);
+                            }
+                        });
+                } else {
+                    processPacket(socket, *header, *body);
+                    doRead(socket);
+                }
+            } else {
+                // disconnect logic
+            }
+        });
+}
+*/

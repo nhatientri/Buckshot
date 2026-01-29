@@ -6,67 +6,64 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find SDL2 for Client
 # Common files
-include_directories(src/common src/vendor/asio)
-file(GLOB COMMON_SOURCES "src/common/*.cpp")
-
-# Find SDL2
-find_package(SDL2 REQUIRED)
-find_package(SDL2_image REQUIRED)
-find_package(SDL2_mixer REQUIRED)
+# Find SQLite3 for Server
 find_package(SQLite3 REQUIRED)
-
-include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIRS} ${SDL2_MIXER_INCLUDE_DIRS} ${SQLite3_INCLUDE_DIRS})
-
-# Find SDL2_mixer using PkgConfig (more robust on Mac/Homebrew)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
-link_directories(${SDL2_MIXER_LIBRARY_DIRS})
-
-# Find SDL2_image using PkgConfig
-pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
-link_directories(${SDL2_IMAGE_LIBRARY_DIRS})
-
-# ImGui Sources
-set(IMGUI_DIR "libs/imgui")
-set(IMGUI_SOURCES
-    ${IMGUI_DIR}/imgui.cpp
-    ${IMGUI_DIR}/imgui_demo.cpp
-    ${IMGUI_DIR}/imgui_draw.cpp
-    ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
-)
-include_directories(${IMGUI_DIR} ${IMGUI_DIR}/backends)
+include_directories(${SQLite3_INCLUDE_DIRS})
 
 # Server Target
 add_executable(server 
     src/server/main.cpp
     src/server/Server.cpp
+    src/server/SocketServer.cpp
     src/server/GameSession.cpp
     src/server/UserManager.cpp
     src/server/ReplayManager.cpp
 )
-target_link_libraries(server ${SDL2_LIBRARIES} ${SDL2_IMAGE_LIBRARIES} ${SDL2_MIXER_LIBRARIES} SQLite::SQLite3)
+target_link_libraries(server SQLite::SQLite3 pthread)
 
-# Client Console Target
-add_executable(client src/client/main.cpp src/client/Client.cpp ${COMMON_SOURCES})
-target_link_libraries(client PRIVATE pthread)
+# Client Targets (Only if NOT building server-only)
+if (NOT DEFINED BUILD_SERVER_ONLY OR NOT BUILD_SERVER_ONLY)
+    # Find SDL2 for Client
+    find_package(SDL2 REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SDL2_MIXER REQUIRED SDL2_mixer)
+    pkg_check_modules(SDL2_IMAGE REQUIRED SDL2_image)
+    
+    include_directories(${SDL2_INCLUDE_DIRS} ${SDL2_IMAGE_INCLUDE_DIRS} ${SDL2_MIXER_INCLUDE_DIRS})
+    link_directories(${SDL2_MIXER_LIBRARY_DIRS} ${SDL2_IMAGE_LIBRARY_DIRS})
 
-# Client GUI Target
-add_executable(client_gui
-    src/client/GuiMain.cpp
-    src/client/NetworkClient.cpp
-    src/client/GameUI.cpp
-    ${COMMON_SOURCES}
-    ${IMGUI_SOURCES}
-)
-target_link_libraries(client_gui PRIVATE ${SDL2_LIBRARIES} ${SDL2_MIXER_LIBRARIES} ${SDL2_IMAGE_LIBRARIES})
+    # ImGui
+    set(IMGUI_DIR "libs/imgui")
+    set(IMGUI_SOURCES
+        ${IMGUI_DIR}/imgui.cpp
+        ${IMGUI_DIR}/imgui_demo.cpp
+        ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp
+        ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+    include_directories(${IMGUI_DIR} ${IMGUI_DIR}/backends)
 
-# Platform Specific Linking
-if (APPLE)
-    target_link_libraries(client_gui PRIVATE "-framework OpenGL" "-framework CoreFoundation")
-else()
-    find_package(OpenGL REQUIRED)
-    target_link_libraries(client_gui PRIVATE ${OPENGL_LIBRARIES})
+    # Client Console
+    add_executable(client src/client/main.cpp src/client/Client.cpp ${COMMON_SOURCES})
+    target_link_libraries(client PRIVATE pthread)
+
+    # Client GUI
+    add_executable(client_gui
+        src/client/GuiMain.cpp
+        src/client/NetworkClient.cpp
+        src/client/GameUI.cpp
+        ${COMMON_SOURCES}
+        ${IMGUI_SOURCES}
+    )
+    target_link_libraries(client_gui PRIVATE ${SDL2_LIBRARIES} ${SDL2_MIXER_LIBRARIES} ${SDL2_IMAGE_LIBRARIES})
+
+    # Platform Specific Linking
+    if (APPLE)
+        target_link_libraries(client_gui PRIVATE "-framework OpenGL" "-framework CoreFoundation")
+    else()
+        find_package(OpenGL REQUIRED)
+        target_link_libraries(client_gui PRIVATE ${OPENGL_LIBRARIES})
+    endif()
 endif()

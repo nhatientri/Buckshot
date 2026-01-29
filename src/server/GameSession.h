@@ -1,5 +1,3 @@
-#define ASIO_STANDALONE
-#include <asio.hpp>
 #include <string>
 #include <vector>
 #include <deque>
@@ -11,7 +9,7 @@ namespace Buckshot {
 
 class GameSession {
 public:
-    GameSession(const std::string& p1, const std::string& p2, std::shared_ptr<asio::ip::tcp::socket> p1Sock, std::shared_ptr<asio::ip::tcp::socket> p2Sock);
+    GameSession(const std::string& p1, const std::string& p2, int p1Sock, int p2Sock);
     
     // Core Logic
     void startRound();
@@ -24,14 +22,14 @@ public:
     GameStatePacket getState() const;
     bool isGameOver() const;
     std::string getCurrentTurnUser() const;
-    std::shared_ptr<asio::ip::tcp::socket> getP1Socket() const { return p1Socket; }
-    std::shared_ptr<asio::ip::tcp::socket> getP2Socket() const { return p2Socket; }
+    int getP1Socket() const { return p1Socket; }
+    int getP2Socket() const { return p2Socket; }
     std::string getP1Name() const { return p1Name; }
     std::string getP2Name() const { return p2Name; }
     std::vector<GameStatePacket> getHistory() const { return history; }
     
     // AI
-    bool isAiGame() const { return p2Socket == nullptr; }
+    bool isAiGame() const { return p2Socket == -1; }
     bool executeAiTurn();
     
     // Pause
@@ -40,8 +38,8 @@ public:
 
 private:
     std::string p1Name, p2Name;
-    std::shared_ptr<asio::ip::tcp::socket> p1Socket;
-    std::shared_ptr<asio::ip::tcp::socket> p2Socket;
+    int p1Socket;
+    int p2Socket;
     
     std::vector<GameStatePacket> history; 
     std::chrono::steady_clock::time_point lastActionTime; 
@@ -75,6 +73,13 @@ private:
     // AI Memory
     enum AiShellState { AI_UNKNOWN, AI_KNOWN_LIVE, AI_KNOWN_BLANK };
     AiShellState aiKnownShellState = AI_UNKNOWN;
+
+    /* [ASIO REFERENCE]
+    std::shared_ptr<asio::ip::tcp::socket> p1Socket;
+    std::shared_ptr<asio::ip::tcp::socket> p2Socket;
+    
+    GameSession(..., std::shared_ptr<asio::ip::tcp::socket> p1Sock, std::shared_ptr<asio::ip::tcp::socket> p2Sock);
+    */
 };
 
 }
