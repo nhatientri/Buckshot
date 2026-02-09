@@ -3,8 +3,8 @@ import struct
 import random
 import time
 
-HOST = '192.168.1.142'
-PORT = 8080
+HOST = '172.20.10.2'
+PORT = 8088
 CLIENT_COUNT = 2000
 DURATION = 5
 

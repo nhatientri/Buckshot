@@ -603,7 +603,7 @@ int main(int argc, char** argv) {
     // Network Client
     // Network Client
     std::string serverIp = "127.0.0.1";
-    int serverPort = 8080;
+    int serverPort = 8088;
 
     if (argc > 1) {
         serverIp = argv[1];
