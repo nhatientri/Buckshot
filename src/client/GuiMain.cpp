@@ -250,6 +250,8 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
     // The previous code didn't show opponent Elo, so we'll omit it or placeholder.
     // Actually GameStatePacket only has p1EloChange/p2EloChange at end. 
     // We'll just show Names.
+    int myElo = amIP1 ? s.p1Elo : s.p2Elo;
+    int oppElo = amIP1 ? s.p2Elo : s.p1Elo;
     
     bool myHandcuffed = amIP1 ? s.p1Handcuffed : s.p2Handcuffed;
     bool oppHandcuffed = amIP1 ? s.p2Handcuffed : s.p1Handcuffed;
@@ -274,7 +276,7 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
     ImGui::BeginGroup(); // Opponent Block
     {
         // Info Box
-        ImGui::Text("OPPONENT (%s)", amIP1 ? s.p2Name : s.p1Name);
+        DrawPlayerInfo(amIP1 ? s.p2Name : s.p1Name, oppHp, oppElo, false);
         ImGui::ProgressBar((float)oppHp / 5.0f, ImVec2(-1, 20), ""); // Simplified HP bar
         
         // Item Row
@@ -431,7 +433,7 @@ void ShowGameScreen(const Buckshot::GameStatePacket& s, Buckshot::NetworkClient&
         ImGui::NewLine();
         
         // Info Box
-        ImGui::Text("YOU (%s)", client.getUsername().c_str());
+        DrawPlayerInfo(client.getUsername().c_str(), myHp, myElo, true);
         ImGui::ProgressBar((float)myHp / 5.0f, ImVec2(-1, 20), "");
     }
     ImGui::EndGroup();
@@ -773,8 +775,8 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndMenu();
                 }
-                ImGui::SameLine(ImGui::GetWindowWidth() - 200);
-                ImGui::Text("Logged in as: %s", client.getUsername().c_str());
+                ImGui::SameLine(ImGui::GetWindowWidth() - 250);
+                ImGui::Text("%s (Elo: %d)", client.getUsername().c_str(), client.getElo());
                 ImGui::EndMainMenuBar();
             }
 

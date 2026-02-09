@@ -53,12 +53,6 @@ std::string ReplayManager::getReplayList(const std::string& userFilter) {
                 // Check if user is in the filename (simple check)
                 // Filename format: YYYYMMDD_HHMMSS_Winner_vs_Loser.replay
                 // We just check if username exists in the string (surrounded by _, or at end)
-                // Actually simple substring check might be enough if usernames don't overlap much.
-                // But to be safer, we can parse or check specific patterns.
-                // Simpler: Check if `_user_` or `_user.replay` or `_user_vs` exists?
-                // The format is unpredictable with usernames.
-                // However, `Winner_vs_Loser`.
-                // If I search for `userFilter`, and it is found...
                 if (filename.find(userFilter) != std::string::npos) {
                      ss << filename << "\n";
                 }

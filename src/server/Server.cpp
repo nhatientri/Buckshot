@@ -110,21 +110,17 @@ void Server::startGameloop() {
                 auto& game = *it;
                 if (game->checkTimeout(30)) {
                         std::cout << "Game timed out!" << std::endl;
-                        GameStatePacket state = game->getState();
-                        PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
                         
-                        sendPacket(game->getP1Socket(), &h, sizeof(h));
-                        sendPacket(game->getP1Socket(), &state, sizeof(state));
-                        sendPacket(game->getP2Socket(), &h, sizeof(h));
-                        sendPacket(game->getP2Socket(), &state, sizeof(state));
-                        
+                        // Calculate Elo & Record Match BEFORE sending state
                         std::string winner = game->getState().winner;
                         std::string lose = (winner == game->getP1Name()) ? game->getP2Name() : game->getP1Name();
                         std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
                         auto deltas = userManager.recordMatch(winner, lose, replay);
                         game->setEloChanges((winner==game->getP1Name())?deltas.first : deltas.second, (winner==game->getP2Name())?deltas.first : deltas.second);
 
-                        state = game->getState();
+                        // Send FINAL state (Game Over + Elo)
+                        GameStatePacket state = game->getState();
+                        PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
                         sendPacket(game->getP1Socket(), &h, sizeof(h));
                         sendPacket(game->getP1Socket(), &state, sizeof(state));
                         sendPacket(game->getP2Socket(), &h, sizeof(h));
@@ -156,15 +152,20 @@ void Server::startGameloop() {
         for (auto it = activeGames.begin(); it != activeGames.end();) {
             auto& game = *it;
             if (game->isAiGame() && game->executeAiTurn()) {
+                    if (game->isGameOver()) {
+                        std::string winner = game->getState().winner;
+                        std::string lose = (winner == game->getP1Name()) ? game->getP2Name() : game->getP1Name();
+                        std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+                        auto deltas = userManager.recordMatch(winner, lose, replay);
+                        game->setEloChanges((winner==game->getP1Name())?deltas.first : deltas.second, (winner==game->getP2Name())?deltas.first : deltas.second);
+                    }
+
                     GameStatePacket state = game->getState();
                     PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
                     sendPacket(game->getP1Socket(), &h, sizeof(h));
                     sendPacket(game->getP1Socket(), &state, sizeof(state));
                     
                     if (game->isGameOver()) {
-                        std::string winner = game->getState().winner;
-                        std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
-                        userManager.recordMatch(winner, (winner==game->getP1Name())?game->getP2Name():game->getP1Name(), replay);
                         it = activeGames.erase(it);
                         continue;
                     }
@@ -218,7 +219,7 @@ void Server::processMatchmaking() {
 
         if (s1 != -1 && s2 != -1) {
             std::cout << "Matchmaking (Batch): " << p1.username << " (" << p1.elo << ") vs " << p2.username << " (" << p2.elo << ")" << std::endl;
-            auto game = std::make_shared<GameSession>(p1.username, p2.username, s1, s2);
+            auto game = std::make_shared<GameSession>(p1.username, p2.username, s1, s2, p1.elo, p2.elo);
             activeGames.push_back(game);
             
             GameStatePacket state = game->getState();
@@ -258,23 +259,40 @@ void Server::processPacket(int client, PacketHeader& header, const std::vector<c
         if (header.size == sizeof(LoginRequest)) {
             LoginRequest* req = (LoginRequest*)body.data();
             bool success = userManager.registerUser(req->username, req->password);
-            PacketHeader resp = {0, success ? (uint8_t)CMD_OK : (uint8_t)CMD_FAIL};
-            sendPacket(client, &resp, sizeof(resp));
+            
             if (success) {
+                // Fetch stats to send
+                auto user = userManager.getUser(req->username);
+                UserStats stats = { user->elo, user->wins, user->losses };
+                PacketHeader resp = {(uint32_t)sizeof(stats), CMD_LOGIN_SUCCESS};
+                sendPacket(client, &resp, sizeof(resp));
+                sendPacket(client, &stats, sizeof(stats));
+
                 authenticatedUsers[client] = req->username;
                 std::cout << "Registered: " << req->username << std::endl;
+            } else {
+                 PacketHeader resp = {0, CMD_FAIL};
+                 sendPacket(client, &resp, sizeof(resp));
             }
         }
     } else if (header.command == CMD_LOGIN) {
         if (header.size == sizeof(LoginRequest)) {
             LoginRequest* req = (LoginRequest*)body.data();
             bool success = userManager.loginUser(req->username, req->password);
-            PacketHeader resp = {0, success ? (uint8_t)CMD_OK : (uint8_t)CMD_FAIL};
-            sendPacket(client, &resp, sizeof(resp));
             if (success) {
+                // Fetch stats
+                auto user = userManager.getUser(req->username);
+                UserStats stats = { user->elo, user->wins, user->losses };
+                PacketHeader resp = {(uint32_t)sizeof(stats), CMD_LOGIN_SUCCESS};
+                sendPacket(client, &resp, sizeof(resp));
+                sendPacket(client, &stats, sizeof(stats));
+
                 authenticatedUsers[client] = req->username;
                 broadcastUserList();
                 std::cout << "Logged in: " << req->username << std::endl;
+            } else {
+                PacketHeader resp = {0, CMD_FAIL};
+                sendPacket(client, &resp, sizeof(resp));
             }
         }
     } else if (header.command == CMD_LIST_USERS) {
@@ -297,7 +315,13 @@ void Server::processPacket(int client, PacketHeader& header, const std::vector<c
                 std::string sender = authenticatedUsers[client];
                 if (pendingChallenges.count(target) && pendingChallenges[target] == sender) {
                     pendingChallenges.erase(target);
-                    auto game = std::make_shared<GameSession>(target, sender, targetSock, client);
+                    // Fetch elos
+                    auto u1 = userManager.getUser(target);
+                    auto u2 = userManager.getUser(sender);
+                    int e1 = u1 ? u1->elo : 1000;
+                    int e2 = u2 ? u2->elo : 1000;
+
+                    auto game = std::make_shared<GameSession>(target, sender, targetSock, client, e1, e2);
                     activeGames.push_back(game);
                     
                     GameStatePacket state = game->getState();
@@ -323,7 +347,14 @@ void Server::processPacket(int client, PacketHeader& header, const std::vector<c
             std::string origChallenger(pkt->targetUser);
             int challSock = getSocketByUsername(origChallenger);
             if (challSock != -1) {
-                 auto game = std::make_shared<GameSession>(origChallenger, authenticatedUsers[client], challSock, client);
+                 std::string p1Name = origChallenger;
+                 std::string p2Name = authenticatedUsers[client];
+                 auto u1 = userManager.getUser(p1Name);
+                 auto u2 = userManager.getUser(p2Name);
+                 int e1 = u1 ? u1->elo : 1000;
+                 int e2 = u2 ? u2->elo : 1000;
+
+                 auto game = std::make_shared<GameSession>(p1Name, p2Name, challSock, client, e1, e2);
                  activeGames.push_back(game);
                  
                  GameStatePacket state = game->getState();
@@ -337,7 +368,9 @@ void Server::processPacket(int client, PacketHeader& header, const std::vector<c
     } else if (header.command == CMD_PLAY_AI) {
         if (!getGameSession(client)) {
             std::string p1 = authenticatedUsers[client];
-            auto game = std::make_shared<GameSession>(p1, "The Dealer", client, -1);
+            auto u1 = userManager.getUser(p1);
+            int e1 = u1 ? u1->elo : 1000;
+            auto game = std::make_shared<GameSession>(p1, "The Dealer", client, -1, e1, 9999); // Dealer has high elo?
             activeGames.push_back(game);
             
              GameStatePacket state = game->getState();
@@ -365,6 +398,15 @@ void Server::processPacket(int client, PacketHeader& header, const std::vector<c
         auto game = getGameSession(client);
         if (game) {
             game->resign(authenticatedUsers[client]);
+            
+             if (game->isGameOver()) {
+                 std::string winner = game->getState().winner;
+                 std::string lose = (winner == game->getP1Name()) ? game->getP2Name() : game->getP1Name();
+                 std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+                 auto deltas = userManager.recordMatch(winner, lose, replay);
+                 game->setEloChanges((winner==game->getP1Name())?deltas.first : deltas.second, (winner==game->getP2Name())?deltas.first : deltas.second);
+             }
+
              GameStatePacket state = game->getState();
              PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
              sendPacket(game->getP1Socket(), &h, sizeof(h));
@@ -373,9 +415,6 @@ void Server::processPacket(int client, PacketHeader& header, const std::vector<c
              sendPacket(game->getP2Socket(), &state, sizeof(state));
              
              if (game->isGameOver()) {
-                 std::string winner = game->getState().winner;
-                 std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
-                 userManager.recordMatch(winner, (winner==game->getP1Name())?game->getP2Name():game->getP1Name(), replay);
                  auto it = std::find(activeGames.begin(), activeGames.end(), game);
                  if (it!=activeGames.end()) activeGames.erase(it);
              }
@@ -386,25 +425,23 @@ void Server::processPacket(int client, PacketHeader& header, const std::vector<c
             auto game = getGameSession(client);
             if (game) {
                  game->processMove(authenticatedUsers[client], (MoveType)mv->moveType, (ItemType)mv->itemType);
+                 
+                 if (game->isGameOver()) {
+                      std::string winner = game->getState().winner;
+                      std::string lose = (winner == game->getP1Name()) ? game->getP2Name() : game->getP1Name();
+                      std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
+                      auto deltas = userManager.recordMatch(winner, lose, replay);
+                      game->setEloChanges((winner==game->getP1Name())?deltas.first:deltas.second, (winner==game->getP2Name())?deltas.first:deltas.second);
+                 }
+
                  GameStatePacket state = game->getState();
                  PacketHeader h = {(uint32_t)sizeof(state), CMD_GAME_STATE};
                  sendPacket(game->getP1Socket(), &h, sizeof(h));
                  sendPacket(game->getP1Socket(), &state, sizeof(state));
                  sendPacket(game->getP2Socket(), &h, sizeof(h));
                  sendPacket(game->getP2Socket(), &state, sizeof(state));
-                 
-                 if (game->isGameOver()) {
-                      std::string winner = game->getState().winner;
-                      std::string replay = ReplayManager::saveReplay(game->getP1Name(), game->getP2Name(), winner, game->getHistory());
-                      auto deltas = userManager.recordMatch(winner, (winner==game->getP1Name())?game->getP2Name():game->getP1Name(), replay);
-                      game->setEloChanges((winner==game->getP1Name())?deltas.first:deltas.second, (winner==game->getP2Name())?deltas.first:deltas.second);
-                      
-                        state = game->getState();
-                        sendPacket(game->getP1Socket(), &h, sizeof(h));
-                        sendPacket(game->getP1Socket(), &state, sizeof(state));
-                        sendPacket(game->getP2Socket(), &h, sizeof(h));
-                        sendPacket(game->getP2Socket(), &state, sizeof(state));
 
+                 if (game->isGameOver()) {
                       auto it = std::find(activeGames.begin(), activeGames.end(), game);
                       if (it!=activeGames.end()) activeGames.erase(it);
                  }

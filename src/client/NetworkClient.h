@@ -38,6 +38,9 @@ public:
     std::string getUsername() const { return myUsername; }
     
     std::string getLastMessage(); // Consumes message
+    int32_t getElo() const { return myElo; }
+    int32_t getWins() const { return myWins; }
+    int32_t getLosses() const { return myLosses; }
     std::vector<std::string> getUserList();
     std::string getLeaderboardData();
     std::vector<std::string> getPendingChallenges(); // "Incoming challenge from X" events
@@ -111,6 +114,9 @@ private:
     bool replayReady;
     
     std::string lastOpponent;
+    int32_t myElo = 1000;
+    int32_t myWins = 0;
+    int32_t myLosses = 0;
     
     std::vector<std::string> challenges;
     ClientGameState gameState;

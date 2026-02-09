@@ -16,8 +16,8 @@ enum Command : uint8_t {
     CMD_OK = 0, // Used for success responses
     CMD_REGISTER = 1,
     CMD_LOGIN = 2,
+    CMD_LOGIN_SUCCESS = 3, // New: Returns UserStats
     CMD_FAIL = 255, // Explicit fail code
-    // Duplicates removed
     
     CMD_LIST_USERS = 5,
     CMD_LIST_USERS_RESP = 6,
@@ -84,6 +84,12 @@ struct LoginRequest {
     char password[32];
 };
 
+struct UserStats {
+    int32_t elo;
+    int32_t wins;
+    int32_t losses;
+};
+
 struct ChallengePacket {
     char targetUser[32]; // Who you challenge, or who challenged you
 };
@@ -126,6 +132,8 @@ struct GameStatePacket {
     char currentTurnUser[32]; // Username of whose turn it is
     char p1Name[32];
     char p2Name[32];
+    int32_t p1Elo; // Current Elo
+    int32_t p2Elo; // Current Elo
     char message[128]; // "Player1 shot Self! It was a Blank."
     bool gameOver;
     char winner[32];

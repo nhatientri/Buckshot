@@ -128,6 +128,20 @@ void NetworkClient::processPacket(const PacketHeader& header, const std::vector<
             loggedIn = true; // Conservative guess
         }
         lastStatusMessage = "Operation Successful";
+    } else if (header.command == CMD_LOGIN_SUCCESS) {
+        if (body.size() >= sizeof(UserStats)) {
+            UserStats* stats = (UserStats*)body.data();
+            myElo = stats->elo;
+            myWins = stats->wins;
+            myLosses = stats->losses;
+            
+            if (!loggedIn) {
+                loginSuccess = true;
+                loggedIn = true; 
+            }
+            lastStatusMessage = "Login Successful!";
+            std::cout << "[Client] Login Success! Elo: " << myElo << std::endl;
+        }
     } else if (header.command == CMD_FAIL) {
         if (!loggedIn) loginFailed = true;
         lastStatusMessage = "Operation Failed";

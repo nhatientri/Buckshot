@@ -6,8 +6,8 @@
 
 namespace Buckshot {
 
-GameSession::GameSession(const std::string& p1, const std::string& p2, int p1Sock, int p2Sock)
-    : p1Name(p1), p2Name(p2), p1Socket(p1Sock), p2Socket(p2Sock), hp1(5), hp2(5), gameOver(false),
+GameSession::GameSession(const std::string& p1, const std::string& p2, int p1Sock, int p2Sock, int p1EloVal, int p2EloVal)
+    : p1Name(p1), p2Name(p2), p1Socket(p1Sock), p2Socket(p2Sock), p1Elo(p1EloVal), p2Elo(p2EloVal), hp1(5), hp2(5), gameOver(false),
       p1Handcuffed(false), p2Handcuffed(false), knifeActive(false), inverterActive(false), itemsUsedThisTurn(0) {
     
     currentTurn = p1Name; // P1 starts
@@ -333,6 +333,8 @@ GameStatePacket GameSession::getState() const {
     strncpy(pkt.currentTurnUser, currentTurn.c_str(), 32);
     strncpy(pkt.p1Name, p1Name.c_str(), 32);
     strncpy(pkt.p2Name, p2Name.c_str(), 32);
+    pkt.p1Elo = p1Elo;
+    pkt.p2Elo = p2Elo;
     strncpy(pkt.message, lastMessage.c_str(), 128);
     if (gameOver) {
         strncpy(pkt.winner, winner.c_str(), 32);

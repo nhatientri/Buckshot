@@ -9,7 +9,7 @@ namespace Buckshot {
 
 class GameSession {
 public:
-    GameSession(const std::string& p1, const std::string& p2, int p1Sock, int p2Sock);
+    GameSession(const std::string& p1, const std::string& p2, int p1Sock, int p2Sock, int p1EloVal, int p2EloVal);
     
     // Core Logic
     void startRound();
@@ -40,6 +40,8 @@ private:
     std::string p1Name, p2Name;
     int p1Socket;
     int p2Socket;
+    int p1Elo; // Stored current Elo
+    int p2Elo; // Stored current Elo
     
     std::vector<GameStatePacket> history; 
     std::chrono::steady_clock::time_point lastActionTime; 

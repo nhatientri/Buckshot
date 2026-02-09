@@ -1,0 +1,9 @@
+services:
+  server:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./buckshot.db:/app/buckshot.db
+      - ./replays:/app/replays
+    restart: unless-stopped
